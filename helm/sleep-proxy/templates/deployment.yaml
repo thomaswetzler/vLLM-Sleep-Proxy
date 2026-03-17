@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sleep-proxy.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "sleep-proxy.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "sleep-proxy.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        # Force a new ReplicaSet on every Helm upgrade so refreshed `latest`
+        # images are actually pulled and started.
+        helm.sh/revision: {{ .Release.Revision | quote }}
+      labels:
+        {{- include "sleep-proxy.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "sleep-proxy.serviceAccountName" . }}
+      containers:
+        - name: sleep-proxy
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.targetPort }}
+              protocol: TCP
+          env:
+            - name: ROUTER_URL
+              value: {{ .Values.env.routerUrl | quote }}
+            - name: WAKE_TIMEOUT_SECONDS
+              value: {{ .Values.env.wakeTimeoutSeconds | quote }}
+            - name: POLL_INTERVAL_SECONDS
+              value: {{ .Values.env.pollIntervalSeconds | quote }}
+            - name: ENGINE_CACHE_TTL_SECONDS
+              value: {{ .Values.env.engineCacheTtlSeconds | quote }}
+            - name: MODEL_NODE_CACHE_TTL_SECONDS
+              value: {{ .Values.env.modelNodeCacheTtlSeconds | quote }}
+            - name: FORWARD_TIMEOUT_SECONDS
+              value: {{ .Values.env.forwardTimeoutSeconds | quote }}
+            - name: ROUTER_ACTION_TIMEOUT_SECONDS
+              value: {{ .Values.env.routerActionTimeoutSeconds | quote }}
+            - name: POST_WAKE_RETRY_ATTEMPTS
+              value: {{ .Values.env.postWakeRetryAttempts | quote }}
+            - name: POST_WAKE_RETRY_DELAY_SECONDS
+              value: {{ .Values.env.postWakeRetryDelaySeconds | quote }}
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.namespace
+            - name: AUTO_SLEEP_ENABLED
+              value: {{ .Values.env.autoSleepEnabled | quote }}
+            - name: AUTO_SLEEP_DELAY_SECONDS
+              value: {{ .Values.env.autoSleepDelaySeconds | quote }}
+            - name: AUTO_SLEEP_LEVEL
+              value: {{ .Values.env.autoSleepLevel | quote }}
+            - name: DEBUG_HISTORY_SIZE
+              value: {{ .Values.env.debugHistorySize | quote }}
+            - name: LOG_LEVEL
+              value: {{ .Values.env.logLevel | quote }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.probes.liveness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probes.readiness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}

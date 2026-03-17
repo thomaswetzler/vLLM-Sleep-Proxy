@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ops-ui.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ops-ui.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "ops-ui.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        helm.sh/revision: {{ .Release.Revision | quote }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "ops-ui.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "ops-ui.fullname" . }}
+      containers:
+        - name: ops-ui
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.targetPort }}
+              protocol: TCP
+          env:
+            - name: SLEEP_PROXY_URL
+              value: {{ .Values.env.sleepProxyUrl | quote }}
+            - name: PROMPT_NORMALIZER_URL
+              value: {{ .Values.env.promptNormalizerUrl | quote }}
+            - name: SEMANTIC_ROUTER_URL
+              value: {{ .Values.env.semanticRouterUrl | quote }}
+            - name: MODEL_ADAPTER_URL
+              value: {{ .Values.env.modelAdapterUrl | quote }}
+            - name: INFERENCE_GATEWAY_URL
+              value: {{ .Values.env.inferenceGatewayUrl | quote }}
+            - name: VLLM_ROUTER_URL
+              value: {{ .Values.env.vllmRouterUrl | quote }}
+            - name: LITELLM_URL
+              value: {{ .Values.env.litellmUrl | quote }}
+            - name: OPS_UI_URL
+              value: {{ .Values.env.opsUiUrl | quote }}
+            - name: PLAYGROUND_URL
+              value: {{ .Values.env.playgroundUrl | quote }}
+            - name: EMBEDDINGS_URL
+              value: {{ .Values.env.embeddingsUrl | quote }}
+            - name: REQUEST_TIMEOUT_SECONDS
+              value: {{ .Values.env.requestTimeoutSeconds | quote }}
+            - name: REFRESH_INTERVAL_SECONDS
+              value: {{ .Values.env.refreshIntervalSeconds | quote }}
+            - name: LOG_LEVEL
+              value: {{ .Values.env.logLevel | quote }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probes.readiness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.probes.liveness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

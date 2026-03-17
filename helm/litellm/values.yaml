@@ -1,0 +1,207 @@
+# Upstream shows multiple replicas. For this repo the safer default is one
+# replica, because provider budget tracking is easiest to reason about before a
+# shared Redis budget state is introduced.
+replicaCount: 1
+
+image:
+  repository: ghcr.io/berriai/litellm
+  tag: "main-latest"
+  pullPolicy: Always
+
+service:
+  type: ClusterIP
+  port: 4000
+  targetPort: 4000
+
+ingress:
+  enabled: true
+  className: cilium
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+  hosts:
+    - host: litellm.k3s.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: litellm-tls
+      hosts:
+        - litellm.k3s.example.com
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1001
+  fsGroup: 1001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: false
+
+resources:
+  requests:
+    cpu: "250m"
+    memory: "512Mi"
+  limits:
+    cpu: "2"
+    memory: "2Gi"
+
+probes:
+  readiness:
+    path: /health/readiness
+    initialDelaySeconds: 120
+    periodSeconds: 15
+    timeoutSeconds: 10
+    successThreshold: 1
+    failureThreshold: 3
+  liveness:
+    path: /health/liveliness
+    initialDelaySeconds: 120
+    periodSeconds: 15
+    timeoutSeconds: 10
+    successThreshold: 1
+    failureThreshold: 3
+
+secret:
+  create: true
+  existingSecret: ""
+  data:
+    # Default is intentionally non-empty so the proxy starts with an API key
+    # requirement. Override this per environment before exposing the ingress.
+    masterKey: "change-me-before-production"
+    databaseUrl: ""
+    # Do not hardcode OpenRouter credentials here. `make deploy-litellm`
+    # injects OPENROUTER_API_KEY from the local environment/.env at deploy time.
+    openrouterApiKey: ""
+    redisPassword: ""
+
+openRouter:
+  apiBase: https://openrouter.ai/api/v1
+  siteUrl: ""
+  appName: ""
+  budget:
+    enabled: true
+    # LiteLLM expects provider names here, not model aliases.
+    providerName: openrouter
+    budgetLimit: 10
+    timePeriod: 1mo
+
+redis:
+  # Enable Redis when you want provider budget tracking to be shared across
+  # multiple LiteLLM replicas.
+  enabled: false
+  host: ""
+  port: "6379"
+  db: ""
+
+proxyConfig:
+  litellmSettings:
+    setVerbose: false
+    jsonLogs: true
+    dropParams: true
+  generalSettings:
+    disableMasterKeyReturn: true
+    disableAddingMasterKeyHashToDb: false
+    databaseUrlFromEnv: false
+  routerSettings:
+    # Local quality requests can spend noticeable time in wake/switch logic on
+    # shared nodes before the actual generation starts.
+    timeoutSeconds: 300
+    numRetries: 2
+
+# Local chat models route through the sleep-proxy, which handles
+# wake-on-demand and auto-sleep before forwarding to the vllm-router.
+localModels:
+  - enabled: true
+    alias: local/gemma-3-4b-it
+    upstreamModel: local/gemma-3-4b-it
+    apiBase: http://sleep-proxy-service.vllm.svc.cluster.local:8080/v1
+    apiKey: not-used
+    extraParams: {}
+    modelInfo:
+      lane: small-allrounder
+  - enabled: true
+    alias: local/llama-3.1-8b-instruct
+    upstreamModel: local/llama-3.1-8b-instruct
+    apiBase: http://sleep-proxy-service.vllm.svc.cluster.local:8080/v1
+    apiKey: not-used
+    extraParams: {}
+    modelInfo:
+      lane: default
+  - enabled: true
+    alias: local/qwen2.5-coder-7b-instruct
+    upstreamModel: local/qwen2.5-coder-7b-instruct
+    apiBase: http://sleep-proxy-service.vllm.svc.cluster.local:8080/v1
+    apiKey: not-used
+    extraParams: {}
+    modelInfo:
+      lane: coding
+  - enabled: true
+    alias: local/qwen2.5-14b-instruct
+    upstreamModel: local/qwen2.5-14b-instruct
+    apiBase: http://sleep-proxy-service.vllm.svc.cluster.local:8080/v1
+    apiKey: not-used
+    extraParams: {}
+    modelInfo:
+      lane: quality
+  - enabled: false
+    alias: local/deepseek-r1-distill-qwen-7b
+    upstreamModel: local/deepseek-r1-distill-qwen-7b
+    apiBase: http://sleep-proxy-service.vllm.svc.cluster.local:8080/v1
+    apiKey: not-used
+    extraParams: {}
+    modelInfo:
+      lane: reasoning
+
+# Embeddings stay on the dedicated CPU TEI endpoint but become available under
+# the same LiteLLM proxy URL. TEI is addressed with its public model id even
+# though the weights are loaded from the PVC-backed local path.
+embeddingModels:
+  - enabled: true
+    alias: BAAI/bge-large-en-v1.5
+    upstreamModel: BAAI/bge-large-en-v1.5
+    apiBase: http://vllm-baai-bge-large-en-v15-cpu.vllm.svc.cluster.local:3000/v1
+    apiKey: not-used
+    extraParams: {}
+    modelInfo: {}
+
+# OpenRouter models — disabled in this stack (no OPENROUTER_API_KEY configured).
+openRouterModels:
+  - enabled: false
+    alias: openrouter/free-router
+    upstreamModel: openrouter/openrouter/free
+    extraParams: {}
+    modelInfo:
+      lane: free-router
+  - enabled: false
+    alias: openrouter/google/gemini-2.5-flash
+    upstreamModel: openrouter/google/gemini-2.5-flash
+    extraParams: {}
+    modelInfo: {}
+  - enabled: false
+    alias: openrouter/openai/gpt-4.1-mini
+    upstreamModel: openrouter/openai/gpt-4.1-mini
+    extraParams: {}
+    modelInfo: {}
+
+# Raw pass-through blocks for model types that do not fit the curated lists above.
+# Whisper audio transcription — CPU, served by faster-whisper-server.
+extraModelList:
+  - model_name: whisper-large-v3
+    litellm_params:
+      model: openai/whisper-large-v3
+      api_base: http://vllm-whisper-cpu-service.vllm.svc.cluster.local
+      api_key: not-used
+
+extraEnv: []
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

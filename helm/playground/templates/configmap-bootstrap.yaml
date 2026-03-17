@@ -1,0 +1,54 @@
+{{- /* The first remote target seeds the initial remote URL in settings.json. */ -}}
+{{- $defaultRemote := dict "url" "" "apiKey" "" -}}
+{{- if gt (len .Values.remoteTargets) 0 -}}
+{{- $defaultRemote = index .Values.remoteTargets 0 -}}
+{{- end }}
+{{- $targets := list -}}
+{{- range .Values.remoteTargets }}
+{{- $targets = append $targets (dict
+  "name" .name
+  "url" .url
+  "apiKey" (default "" .apiKey)
+  "description" (default "" .description)
+) -}}
+{{- end }}
+{{- $mcpServers := dict -}}
+{{- range .Values.mcpServers }}
+{{- $entry := dict
+  "name" .name
+  "transport" (default "sse" .transport)
+  "enabled" (default true .enabled)
+  "auto_connect" (default true .autoConnect)
+  "description" (default "" .description)
+-}}
+{{- if .command }}{{- $_ := set $entry "command" .command -}}{{- end }}
+{{- if .args }}{{- $_ := set $entry "args" .args -}}{{- end }}
+{{- if .url }}{{- $_ := set $entry "url" .url -}}{{- end }}
+{{- if .env }}{{- $_ := set $entry "env" .env -}}{{- end }}
+{{- $_ := set $mcpServers .name $entry -}}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "playground.fullname" . }}-bootstrap
+  labels:
+    {{- include "playground.labels" . | nindent 4 }}
+data:
+  settings.json: |
+{{ dict
+    "theme" .Values.bootstrap.settings.theme
+    "locale" .Values.bootstrap.settings.locale
+    "layout" nil
+    "vllm_run_mode" "remote"
+    "vllm_remote_url" (default "" $defaultRemote.url)
+    "vllm_remote_api_key" (default "" $defaultRemote.apiKey)
+    "omni_run_mode" "remote"
+    "omni_remote_url" ""
+    "omni_remote_api_key" ""
+  | toPrettyJson | nindent 4 }}
+  # The selector logic itself lives in the image; Helm only injects the target
+  # list so operators can add or reorder endpoints via values.yaml.
+  remote-targets.json: |
+{{ dict "targets" $targets | toPrettyJson | nindent 4 }}
+  mcp_servers.json: |
+{{ dict "servers" $mcpServers | toPrettyJson | nindent 4 }}

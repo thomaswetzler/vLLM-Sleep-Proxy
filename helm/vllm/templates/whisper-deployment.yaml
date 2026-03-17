@@ -1,0 +1,71 @@
+{{- if .Values.whisper.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-{{ .Values.whisper.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Values.whisper.name }}
+    app.kubernetes.io/component: whisper
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  replicas: {{ .Values.whisper.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Values.whisper.name }}
+      app.kubernetes.io/component: whisper
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ .Values.whisper.name }}
+        app.kubernetes.io/component: whisper
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      containers:
+        - name: whisper
+          image: "{{ .Values.whisper.image.repository }}:{{ .Values.whisper.image.tag }}"
+          imagePullPolicy: {{ .Values.whisper.imagePullPolicy }}
+          ports:
+            - containerPort: {{ .Values.whisper.port }}
+              name: http
+          env:
+            {{- range $key, $value := .Values.whisper.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          startupProbe:
+            httpGet:
+              path: {{ .Values.whisper.probes.startup.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.whisper.probes.startup.initialDelaySeconds }}
+            periodSeconds: {{ .Values.whisper.probes.startup.periodSeconds }}
+            failureThreshold: {{ .Values.whisper.probes.startup.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.whisper.probes.readiness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.whisper.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.whisper.probes.readiness.periodSeconds }}
+            failureThreshold: {{ .Values.whisper.probes.readiness.failureThreshold }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.whisper.probes.liveness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.whisper.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.whisper.probes.liveness.periodSeconds }}
+            failureThreshold: {{ .Values.whisper.probes.liveness.failureThreshold }}
+          resources:
+            {{- toYaml .Values.whisper.resources | nindent 12 }}
+          {{- if .Values.whisper.pvc.enabled }}
+          volumeMounts:
+            - name: whisper-data
+              mountPath: /data
+          {{- end }}
+      {{- if .Values.whisper.pvc.enabled }}
+      volumes:
+        - name: whisper-data
+          persistentVolumeClaim:
+            claimName: {{ .Values.whisper.pvc.existingClaim }}
+      {{- end }}
+{{- end }}

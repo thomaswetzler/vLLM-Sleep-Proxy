@@ -1,0 +1,63 @@
+{{- if .Values.autoSleepHook.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-auto-sleep
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: {{ add (int .Values.autoSleepHook.timeoutSeconds) 300 }}
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/managed-by: {{ .Release.Service }}
+        helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: auto-sleep
+          image: {{ .Values.autoSleepHook.image | quote }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: AUTO_SLEEP_TIMEOUT_SECONDS
+              value: {{ .Values.autoSleepHook.timeoutSeconds | quote }}
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              pids=""
+              {{- range $modelSpec := (index .Values "vllm-stack").servingEngineSpec.modelSpec }}
+              (
+                NODE={{ default "default" $modelSpec.nodeName | quote }}
+                ENGINE_URL={{ printf "http://%s-%s-engine-service:80" $.Release.Name $modelSpec.name | quote }}
+                export NODE ENGINE_URL
+                /scripts/auto-sleep.sh
+              ) &
+              pids="$pids $!"
+              {{- end }}
+              status=0
+              for pid in $pids; do
+                wait "$pid" || status=1
+              done
+              exit "$status"
+          volumeMounts:
+            - name: vllm-scripts
+              mountPath: /scripts
+            - name: preloaded-model-cache
+              mountPath: /data
+      volumes:
+        - name: vllm-scripts
+          configMap:
+            name: {{ .Release.Name }}-scripts
+            defaultMode: 0755
+        - name: preloaded-model-cache
+          persistentVolumeClaim:
+            claimName: {{ .Values.preloadedModelCache.claimName }}
+{{- end }}

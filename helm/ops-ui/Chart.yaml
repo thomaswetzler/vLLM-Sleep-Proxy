@@ -1,0 +1,6 @@
+apiVersion: v2
+name: ops-ui
+description: Independent admin UI for routing, model state and component health
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

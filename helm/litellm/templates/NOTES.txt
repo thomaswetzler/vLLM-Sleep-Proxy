@@ -1,0 +1,16 @@
+LiteLLM is available inside the cluster at:
+
+  http://{{ include "litellm.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}
+
+If ingress is enabled, expose the same OpenAI-compatible API externally via the configured host.
+
+The proxy expects the LiteLLM master key configured in the chart secret:
+
+  Authorization: Bearer <LITELLM_MASTER_KEY>
+
+Configured local backends:
+  - inference-gateway.vllm.svc.cluster.local for chat/completions
+  - vllm-baai-bge-large-en-v15-cpu.vllm.svc.cluster.local:3000 for embeddings
+
+OpenRouter models become available once OPENROUTER_API_KEY is populated and the
+desired entries under `openRouterModels` are enabled.

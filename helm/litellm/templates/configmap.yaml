@@ -1,0 +1,101 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "litellm.fullname" . }}-config
+  labels:
+    {{- include "litellm.labels" . | nindent 4 }}
+data:
+  proxy_config.yaml: |
+    litellm_settings:
+      set_verbose: {{ .Values.proxyConfig.litellmSettings.setVerbose }}
+      json_logs: {{ .Values.proxyConfig.litellmSettings.jsonLogs }}
+      drop_params: {{ .Values.proxyConfig.litellmSettings.dropParams }}
+    general_settings:
+      disable_master_key_return: {{ .Values.proxyConfig.generalSettings.disableMasterKeyReturn }}
+      disable_adding_master_key_hash_to_db: {{ .Values.proxyConfig.generalSettings.disableAddingMasterKeyHashToDb }}
+      {{- if eq (include "litellm.hasSecretRef" .) "true" }}
+      master_key: os.environ/LITELLM_MASTER_KEY
+      {{- end }}
+      {{- if .Values.proxyConfig.generalSettings.databaseUrlFromEnv }}
+      database_url: os.environ/DATABASE_URL
+      {{- end }}
+    router_settings:
+      timeout: {{ .Values.proxyConfig.routerSettings.timeoutSeconds }}
+      num_retries: {{ .Values.proxyConfig.routerSettings.numRetries }}
+      {{- if .Values.openRouter.budget.enabled }}
+      provider_budget_config:
+        {{ .Values.openRouter.budget.providerName }}:
+          budget_limit: {{ .Values.openRouter.budget.budgetLimit }}
+          time_period: {{ .Values.openRouter.budget.timePeriod | quote }}
+      {{- end }}
+      {{- if .Values.redis.enabled }}
+      redis_host: os.environ/REDIS_HOST
+      redis_port: os.environ/REDIS_PORT
+      redis_password: os.environ/REDIS_PASSWORD
+      {{- if .Values.redis.db }}
+      redis_db: {{ .Values.redis.db }}
+      {{- end }}
+      {{- end }}
+    model_list:
+    {{- range $model := .Values.localModels }}
+    {{- if $model.enabled }}
+    {{- $providerModel := $model.upstreamModel }}
+    {{- if not (hasPrefix "openai/" $providerModel) }}
+    {{- $providerModel = printf "openai/%s" $providerModel }}
+    {{- end }}
+      - model_name: {{ default $model.upstreamModel $model.alias | quote }}
+        litellm_params:
+          model: {{ $providerModel | quote }}
+          api_base: {{ $model.apiBase | quote }}
+          api_key: {{ default "not-used" $model.apiKey | quote }}
+          {{- with $model.extraParams }}
+{{ toYaml . | indent 10 }}
+          {{- end }}
+        {{- with $model.modelInfo }}
+        model_info:
+{{ toYaml . | indent 10 }}
+        {{- end }}
+    {{- end }}
+    {{- end }}
+    {{- range $model := .Values.embeddingModels }}
+    {{- if $model.enabled }}
+    {{- $providerModel := $model.upstreamModel }}
+    {{- if not (hasPrefix "openai/" $providerModel) }}
+    {{- $providerModel = printf "openai/%s" $providerModel }}
+    {{- end }}
+      - model_name: {{ default $model.upstreamModel $model.alias | quote }}
+        litellm_params:
+          model: {{ $providerModel | quote }}
+          api_base: {{ $model.apiBase | quote }}
+          api_key: {{ default "not-used" $model.apiKey | quote }}
+          {{- with $model.extraParams }}
+{{ toYaml . | indent 10 }}
+          {{- end }}
+        {{- with $model.modelInfo }}
+        model_info:
+{{ toYaml . | indent 10 }}
+        {{- end }}
+    {{- end }}
+    {{- end }}
+    {{- range $model := .Values.openRouterModels }}
+    {{- if $model.enabled }}
+    {{- $providerModel := $model.upstreamModel }}
+    {{- if not (hasPrefix "openrouter/" $providerModel) }}
+    {{- $providerModel = printf "openrouter/%s" $providerModel }}
+    {{- end }}
+      - model_name: {{ default $model.upstreamModel $model.alias | quote }}
+        litellm_params:
+          model: {{ $providerModel | quote }}
+          api_key: os.environ/OPENROUTER_API_KEY
+          {{- with $model.extraParams }}
+{{ toYaml . | indent 10 }}
+          {{- end }}
+        {{- with $model.modelInfo }}
+        model_info:
+{{ toYaml . | indent 10 }}
+        {{- end }}
+    {{- end }}
+    {{- end }}
+    {{- with .Values.extraModelList }}
+{{ toYaml . | indent 6 }}
+    {{- end }}

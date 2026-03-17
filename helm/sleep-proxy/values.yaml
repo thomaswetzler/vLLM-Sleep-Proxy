@@ -1,0 +1,71 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/thomaswetzler/sleep-proxy
+  tag: latest
+  pullPolicy: Always
+
+service:
+  name: sleep-proxy-service
+  port: 8080
+  targetPort: 8080
+
+env:
+  # URL des vllm-router-service (ClusterIP)
+  routerUrl: http://vllm-router-service:80
+  # Maximale Wartezeit bis Modell aufgewacht ist (Sekunden)
+  wakeTimeoutSeconds: "120"
+  # Polling-Intervall beim Wake-up-Check (Sekunden)
+  pollIntervalSeconds: "2"
+  # TTL des Engine-Cache (Sekunden)
+  engineCacheTtlSeconds: "30"
+  # TTL des Pod->Node-Cache für /v1/models?include=node
+  modelNodeCacheTtlSeconds: "30"
+  # Forward-Timeout für proxied Requests (Sekunden)
+  forwardTimeoutSeconds: "300"
+  # Längere Timeouts für Router-Kontrollpfade wie wake_up()/sleep().
+  # Gerade die große Gemma-Lane braucht hier teils deutlich länger als 10s.
+  routerActionTimeoutSeconds: "120"
+  # Einige Engines melden direkt nach wake_up() noch kurz 503/502/504.
+  # Diese kleinen Startup-Fenster retried der Proxy transparent fuer den Client.
+  postWakeRetryAttempts: "3"
+  postWakeRetryDelaySeconds: "2"
+  # Modell nach erfolgreicher Inferenz wieder schlafen legen
+  autoSleepEnabled: "true"
+  # Etwas längere Verzögerung, damit längere Streaming-/UI-Requests auf der
+  # Qualitäts-Lane nicht sofort wieder in einen Sleep/Wake-Race kippen.
+  autoSleepDelaySeconds: "10"
+  # vLLM sleep level
+  # Rollback auf den bisherigen AWQ-Level-2-Pfad: wieder auf "2" setzen.
+  autoSleepLevel: "1"
+  # Anzahl der letzten Requests, die fuer die Ops-UI im Speicher gehalten werden.
+  debugHistorySize: "200"
+  logLevel: info
+
+serviceAccount:
+  create: true
+  name: ""
+
+rbac:
+  create: true
+
+resources:
+  requests:
+    cpu: "100m"
+    memory: "128Mi"
+  limits:
+    cpu: "500m"
+    memory: "256Mi"
+
+# Probes – Sleep-Proxy ist schnell startbereit
+probes:
+  liveness:
+    path: /health
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    failureThreshold: 3
+  readiness:
+    path: /health
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    failureThreshold: 3

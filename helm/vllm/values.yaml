@@ -1,0 +1,410 @@
+# values.yaml - Wrapper chart values:
+# - subchart "vllm-stack" configuration lives under "vllm-stack"
+# - CPU embeddings (TEI) are configured unter "embeddings"
+
+preloadedModelCache:
+  # PVC created by helm/models chart
+  claimName: &sharedModelCacheClaim vllm-model-cache
+
+autoSleepHook:
+  enabled: true
+  image: python:3.12-slim
+  timeoutSeconds: 1800
+  warmupRequestTimeoutSeconds: 300
+  sleepRequestTimeoutSeconds: 120
+
+sleepMode:
+  # vLLM sleep level used by the auto-sleep hook job.
+  # Level 1: offloads KV cache + weights to CPU RAM — fast wake-up (recommended).
+  # Level 2: releases all GPU memory incl. weights — slower wake-up, broken for AWQ models.
+  level: 1
+
+# ---------------------------------------------------------------------------
+# Gemeinsame Blöcke (YAML Anchors) – werden per Alias wiederverwendet
+# ---------------------------------------------------------------------------
+
+# Init Container: nvidia-smi VRAM-Check + RAM-Check + file-based GPU-Mutex.
+# Mutex-Datei in /data/locks/gpu-loading-<node> verhindert simultanes Laden.
+# Script kommt aus ConfigMap {{ .Release.Name }}-scripts (vllm-scripts), mount unter /scripts.
+_initContainer: &initContainer
+  name: await-gpu-free
+  image: "nvidia/cuda:12.2.0-base-ubuntu22.04"
+  env:
+    - name: NVIDIA_VISIBLE_DEVICES
+      value: "all"
+  extraVolumeMounts:
+    - name: vllm-scripts
+      mountPath: /scripts
+    - name: preloaded-model-cache
+      mountPath: /data
+  command:
+    - /bin/sh
+    - /scripts/await-gpu-free.sh
+
+# Volumes: Modell-Cache PVC + Scripts ConfigMap
+_extraVolumes: &extraVolumes
+  - name: preloaded-model-cache
+    persistentVolumeClaim:
+      claimName: vllm-model-cache
+  - name: vllm-scripts
+    configMap:
+      name: vllm-scripts
+      defaultMode: 0755
+
+# VolumeMounts für den Hauptcontainer
+_extraVolumeMounts: &extraVolumeMounts
+  - name: preloaded-model-cache
+    mountPath: /data
+  - name: vllm-scripts
+    mountPath: /scripts
+
+# Gemeinsame Env-Variablen
+_gpuEnv: &gpuEnv
+  - name: NVIDIA_VISIBLE_DEVICES
+    value: "all"
+  - name: VLLM_SERVER_DEV_MODE
+    value: "1"
+
+# Basis-vllmConfig (alle GPU-Modelle teilen diese Flags)
+_vllmBase: &vllmBase
+  tensorParallelSize: 1
+  enableChunkedPrefill: false
+  enablePrefixCaching: false
+  extraArgs:
+    - "--gpu-memory-utilization"
+    - "0.8"
+    - "--disable-log-requests"
+    - "--enable-sleep-mode"
+
+# ---------------------------------------------------------------------------
+# vllm-stack Subchart Konfiguration
+# ---------------------------------------------------------------------------
+vllm-stack:
+  servingEngineSpec:
+    enableEngine: true
+    runtimeClassName: "nvidia"
+    strategy:
+      type: Recreate
+
+    modelSpec:
+
+      # -----------------------------------------------------------------------
+      # lab01 – Default-Lane: Llama 3.1 8B Instruct (AWQ)
+      # Der allgemeine Qwen-Pfad wird bewusst durch Llama ersetzt, um die
+      # Modellfamilien im lokalen Mix besser zu unterscheiden. Tool Calling
+      # folgt hier dem offiziellen vLLM-Ansatz mit Chat-Template.
+      # -----------------------------------------------------------------------
+      - name: "llama31-8b-instruct-lab01-gpu"
+        repository: "lmcache/vllm-openai"
+        tag: "v0.3.12"
+        modelURL: "/data/models/llama-3.1-8b-instruct"
+        replicaCount: 1
+        nodeName: "lab01"
+        enableTool: true
+        toolCallParser: "llama3_json"
+        chatTemplate: "tool_chat_template_llama3.1_json.jinja"
+
+        resources:
+          requests:
+            cpu: "1"
+            memory: "1Gi"
+          limits:
+            cpu: "8"
+            memory: "20Gi"
+        shmSize: "8Gi"
+
+        vllmConfig:
+          <<: *vllmBase
+          # Die Default-/Tool-Lane darf etwas mehr Kontext aufnehmen. 8k war
+          # ein konservativer Stabilitaetswert aus der fruehen Sleep/Wake-
+          # Phase; mit dem aktuellen VRAM-Profil auf lab01 ist 12k ein
+          # vertretbarer naechster Schritt.
+          maxModelLen: 12288
+          dtype: "auto"   # AWQ: vLLM erkennt Quantisierung automatisch
+          extraArgs:
+            - "--gpu-memory-utilization"
+            - "0.80"
+            - "--disable-log-requests"
+            - "--enable-sleep-mode"
+            - "--served-model-name"
+            - "local/llama-3.1-8b-instruct"
+            - "--enforce-eager"
+
+        initContainer: *initContainer
+        env: *gpuEnv
+        extraVolumes: *extraVolumes
+        extraVolumeMounts: *extraVolumeMounts
+
+      # -----------------------------------------------------------------------
+      # lab01 – Qualitäts-Lane: Qwen2.5 14B Instruct (AWQ)
+      # Diese Lane ersetzt die bisherige Gemma-12B-QAT-Variante, weil der
+      # Sleep/Wake-Pfad mit Qwen-AWQ im laufenden Cluster deutlich robuster war.
+      # Der lokale Alias bleibt sauber ohne AWQ-Suffix.
+      # -----------------------------------------------------------------------
+      - name: "qwen25-14b-instruct-lab01-gpu"
+        repository: "lmcache/vllm-openai"
+        tag: "v0.3.12"
+        modelURL: "/data/models/qwen2.5-14b-instruct"
+        replicaCount: 1
+        nodeName: "lab01"
+
+        resources:
+          requests:
+            cpu: "1"
+            memory: "1Gi"
+          limits:
+            cpu: "8"
+            memory: "24Gi"
+        shmSize: "8Gi"
+
+        vllmConfig:
+          <<: *vllmBase
+          # Die Qualitäts-Lane darf längere Kontexte bedienen, bleibt aber
+          # konservativ bei einer einzigen aktiven Sequenz.
+          maxModelLen: 4096
+          maxNumSeqs: 1
+          dtype: "auto"
+          extraArgs:
+            - "--gpu-memory-utilization"
+            - "0.78"
+            - "--disable-log-requests"
+            - "--enable-sleep-mode"
+            - "--served-model-name"
+            - "local/qwen2.5-14b-instruct"
+            - "--enforce-eager"
+
+        initContainer: *initContainer
+        env: *gpuEnv
+        extraVolumes: *extraVolumes
+        extraVolumeMounts: *extraVolumeMounts
+
+      # -----------------------------------------------------------------------
+      # lab02 – Kleiner Allrounder: Gemma 3 4B IT
+      # Im PVC liegt die AWQ-Variante. Das 8-GiB-Profil bleibt konservativ:
+      # kurzer Kontext, eager mode und reduzierte GPU-Auslastung.
+      # Auch hier bleibt Multimodalitaet vorerst deaktiviert, damit der
+      # Text-only-Betrieb auf der 8-GiB-GPU sauber startet.
+      # -----------------------------------------------------------------------
+      - name: "gemma3-4b-it-lab02-gpu"
+        repository: "lmcache/vllm-openai"
+        tag: "v0.3.12"
+        modelURL: "/data/models/gemma-3-4b-it"
+        replicaCount: 1
+        nodeName: "lab02"
+
+        resources:
+          requests:
+            cpu: "1"
+            memory: "1Gi"
+          limits:
+            cpu: "8"
+            memory: "16Gi"
+        shmSize: "4Gi"
+
+        vllmConfig:
+          <<: *vllmBase
+          # Auch die kleine Gemma-Lane sollte im offiziell unterstützten Modus
+          # laufen; text-only bleibt davon unberührt.
+          enableChunkedPrefill: true
+          maxModelLen: 2048
+          maxNumSeqs: 8
+          dtype: "auto"
+          extraArgs:
+            - "--gpu-memory-utilization"
+            - "0.70"
+            - "--disable-log-requests"
+            - "--enable-sleep-mode"
+            - "--limit-mm-per-prompt"
+            - '{"image":0}'
+            - "--served-model-name"
+            - "local/gemma-3-4b-it"
+            - "--enforce-eager"
+
+        initContainer: *initContainer
+        env: *gpuEnv
+        extraVolumes: *extraVolumes
+        extraVolumeMounts: *extraVolumeMounts
+
+      # -----------------------------------------------------------------------
+      # lab02 – Coding-Lane: Qwen2.5-Coder-7B-Instruct (intern AWQ)
+      # Der Benutzer sieht keinen AWQ-Suffix, das Repo bleibt aber aus
+      # Ressourcengruenden quantisiert.
+      # -----------------------------------------------------------------------
+      - name: "qwen25-coder-7b-instruct-lab02-gpu"
+        repository: "lmcache/vllm-openai"
+        tag: "v0.3.12"
+        modelURL: "/data/models/qwen2.5-coder-7b-instruct"
+        replicaCount: 1
+        nodeName: "lab02"
+
+        resources:
+          requests:
+            cpu: "1"
+            memory: "1Gi"
+          limits:
+            cpu: "8"
+            memory: "20Gi"
+        shmSize: "8Gi"
+
+        vllmConfig:
+          <<: *vllmBase
+          maxModelLen: 4096
+          maxNumSeqs: 32
+          dtype: "auto"
+          extraArgs:
+            - "--gpu-memory-utilization"
+            - "0.80"
+            - "--disable-log-requests"
+            - "--enable-sleep-mode"
+            - "--served-model-name"
+            - "local/qwen2.5-coder-7b-instruct"
+            - "--enforce-eager"
+
+        initContainer: *initContainer
+        env: *gpuEnv
+        extraVolumes: *extraVolumes
+        extraVolumeMounts: *extraVolumeMounts
+
+  routerSpec:
+    enableRouter: true
+    replicaCount: 1
+    serviceType: ClusterIP
+    routingLogic: "roundrobin"
+    imagePullPolicy: IfNotPresent
+
+    startupProbe:
+      initialDelaySeconds: 20
+      periodSeconds: 5
+      timeoutSeconds: 2
+      failureThreshold: 24
+      httpGet:
+        path: /health
+
+    readinessProbe:
+      initialDelaySeconds: 10
+      periodSeconds: 5
+      timeoutSeconds: 2
+      failureThreshold: 6
+      httpGet:
+        path: /health
+
+    livenessProbe:
+      initialDelaySeconds: 90
+      periodSeconds: 10
+      timeoutSeconds: 2
+      failureThreshold: 6
+      httpGet:
+        path: /health
+
+    ingress:
+      enabled: true
+      className: cilium
+      annotations: {}
+      hosts:
+        - host: llm-router.k3s.example.com
+          paths:
+            - path: /
+              pathType: Prefix
+      tls: []
+
+  # global ingress vom chart deaktivieren, wir nutzen routerSpec.ingress
+  ingress:
+    enabled: false
+
+# ---------------------------------------------------------------------------
+# Embeddings (HuggingFace Text Embeddings Inference – CPU)
+# ---------------------------------------------------------------------------
+embeddings:
+  enabled: true
+  name: baai-bge-large-en-v15-cpu
+  image:
+    repository: ghcr.io/huggingface/text-embeddings-inference
+    tag: "cpu-1.9.1"
+  imagePullPolicy: IfNotPresent
+  replicas: 1
+  port: 3000
+  model: "/data/models/baai-bge-large-en-v1.5"
+  args:
+    - "--model-id"
+    - "/data/models/baai-bge-large-en-v1.5"
+    - "--port"
+    - "3000"
+    - "--hostname"
+    - "0.0.0.0"
+    - "--dtype"
+    - "float32"
+    - "--max-batch-tokens"
+    - "16384"
+  resources:
+    requests:
+      cpu: "2"
+      memory: "2Gi"
+    limits:
+      cpu: "4"
+      memory: "4Gi"
+  pvc:
+    enabled: true
+    existingClaim: *sharedModelCacheClaim
+    storageClass: "longhorn"
+    size: "5Gi"
+    accessMode: ReadWriteOnce
+  probes:
+    startup:
+      path: /health
+      initialDelaySeconds: 10
+      periodSeconds: 5
+      failureThreshold: 60
+    readiness:
+      path: /health
+      initialDelaySeconds: 10
+      periodSeconds: 5
+      failureThreshold: 12
+    liveness:
+      path: /health
+      initialDelaySeconds: 30
+      periodSeconds: 10
+      failureThreshold: 3
+
+# ---------------------------------------------------------------------------
+# Whisper (faster-whisper-server – CPU, OpenAI-compatible ASR)
+# ---------------------------------------------------------------------------
+whisper:
+  enabled: true
+  name: whisper-cpu
+  image:
+    repository: fedirz/faster-whisper-server
+    tag: "latest-cpu"
+  imagePullPolicy: IfNotPresent
+  replicas: 1
+  port: 8000
+  env:
+    # Modell wird beim ersten Start von HuggingFace geladen und im PVC gecacht
+    WHISPER__MODEL: "Systran/faster-whisper-large-v3"
+    WHISPER__INFERENCE_DEVICE: "cpu"
+    HF_HOME: "/data/whisper-cache"
+  resources:
+    requests:
+      cpu: "2"
+      memory: "4Gi"
+    limits:
+      cpu: "6"
+      memory: "8Gi"
+  pvc:
+    enabled: true
+    existingClaim: *sharedModelCacheClaim
+  probes:
+    startup:
+      path: /health
+      initialDelaySeconds: 15
+      periodSeconds: 10
+      failureThreshold: 60    # large-v3 Download beim ersten Start kann dauern
+    readiness:
+      path: /health
+      initialDelaySeconds: 15
+      periodSeconds: 10
+      failureThreshold: 6
+    liveness:
+      path: /health
+      initialDelaySeconds: 60
+      periodSeconds: 15
+      failureThreshold: 3

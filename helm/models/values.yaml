@@ -1,0 +1,81 @@
+pvc:
+  create: true
+  name: vllm-model-cache
+  storageClass: longhorn
+  size: 80Gi
+  accessMode: ReadWriteMany
+  labels: {}
+  annotations: {}
+
+templatePvc:
+  create: true
+  name: vllm-templates-pvc
+  storageClass: longhorn
+  size: 256Mi
+  accessMode: ReadWriteMany
+  labels: {}
+  annotations: {}
+
+huggingfaceCredentials:
+  enabled: true
+  secretName: huggingface-credentials
+  secretKey: HUGGING_FACE_HUB_TOKEN
+  # Set via CLI from env, e.g.:
+  # --set-string huggingfaceCredentials.token="$HUGGING_FACE_TOKEN"
+  token: ""
+
+loader:
+  enabled: true
+  job:
+    backoffLimit: 3
+    ttlSecondsAfterFinished: null
+  image:
+    repository: python
+    tag: 3.11-slim
+    pullPolicy: IfNotPresent
+  mountPath: /data
+  modelRoot: /data/models
+  templateRoot: /templates
+  hfHome: /data/.hf-home
+  resources:
+    requests:
+      cpu: "1"
+      memory: "4Gi"
+    limits:
+      cpu: "2"
+      memory: "8Gi"
+  models:
+    # Kleiner Allrounder auf der kleineren GPU. Fuer das 8-GiB-Profil nutzen
+    # wir eine AWQ-Variante, halten den lokalen Pfad aber bewusst stabil.
+    - id: gaunernst/gemma-3-4b-it-int4-awq
+      enabled: true
+      path: gemma-3-4b-it
+
+    # Default-Lane. Fuer mehr Modell-Diversitaet ersetzt Llama 3.1 den
+    # allgemeinen Qwen-Pfad. Das Repo bleibt quantisiert, damit die 8B-Lane auf
+    # lab01 in denselben Ressourcenrahmen passt.
+    - id: hugging-quants/Meta-Llama-3.1-8B-Instruct-AWQ-INT4
+      enabled: true
+      path: llama-3.1-8b-instruct
+
+    # Coding-Lane auf lab02. Auch hier wird der lokale Alias ohne AWQ-Suffix
+    # stabil gehalten, obwohl das Backend-Repo quantisiert ist.
+    - id: Qwen/Qwen2.5-Coder-7B-Instruct-AWQ
+      enabled: true
+      path: qwen2.5-coder-7b-instruct
+
+    # Qualitäts-Lane auf lab01. Qwen 14B AWQ ersetzt die bisherige Gemma-12B-
+    # Lane, weil der Sleep/Wake-Pfad im Live-Betrieb deutlich robuster ist.
+    - id: Qwen/Qwen2.5-14B-Instruct-AWQ
+      enabled: true
+      path: qwen2.5-14b-instruct
+
+    # Vorbereitete optionale Reasoning-Lane. Der Downloader ignoriert Einträge
+    # mit enabled=false, daher reicht spaeter ein Flip auf true.
+    - id: deepseek-ai/DeepSeek-R1-Distill-Qwen-7B
+      enabled: false
+      path: deepseek-r1-distill-qwen-7b
+  templates:
+    - enabled: true
+      name: tool_chat_template_llama3.1_json.jinja
+      url: https://raw.githubusercontent.com/vllm-project/vllm/main/examples/tool_chat_template_llama3.1_json.jinja

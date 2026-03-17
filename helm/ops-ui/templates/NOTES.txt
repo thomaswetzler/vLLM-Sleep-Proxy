@@ -1,0 +1,11 @@
+1. Cluster-intern:
+   http://{{ include "ops-ui.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}
+
+2. Optionales Ingress:
+{{- if .Values.ingress.enabled }}
+{{- range .Values.ingress.hosts }}
+   http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}
+{{- end }}
+{{- else }}
+   Ingress ist deaktiviert.
+{{- end }}

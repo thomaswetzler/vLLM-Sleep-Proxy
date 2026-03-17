@@ -1,0 +1,23 @@
+# Secrets — never commit
+.env
+
+# Helm local cache
+.helm/
+helm/*/charts/*.tgz
+
+# Python
+__pycache__/
+*.py[cod]
+.venv*/
+*.egg-info/
+
+# macOS
+.DS_Store
+
+# Editor
+.idea/
+.vscode/
+*.swp
+
+# Test/log artefacts
+logs/

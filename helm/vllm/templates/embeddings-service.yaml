@@ -1,0 +1,19 @@
+{{- if .Values.embeddings.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "vllm.embeddings.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vllm.embeddings.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: {{ default "embeddings-cpu" .Values.embeddings.name }}
+    app.kubernetes.io/component: embeddings
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: {{ .Values.embeddings.port }}
+      targetPort: http
+{{- end }}

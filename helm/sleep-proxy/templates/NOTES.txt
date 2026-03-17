@@ -1,0 +1,16 @@
+Sleep-Proxy erfolgreich deployt!
+
+Service: {{ .Values.service.name }}:{{ .Values.service.port }} (ClusterIP)
+Router:  {{ .Values.env.routerUrl }}
+
+Der Proxy sitzt zwischen kgateway und dem vllm-router.
+Schlafende Engines werden automatisch aufgeweckt (max. {{ .Values.env.wakeTimeoutSeconds }}s Wartezeit).
+
+Metriken:
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ .Values.service.name }} 8080:8080
+  curl http://localhost:8080/metrics | grep sleep_proxy
+
+Build & Import (lokales Image):
+  docker build -t sleep-proxy:latest ./services/sleep-proxy/
+  # Auf jedem k3s-Node:
+  docker save sleep-proxy:latest | ssh <node> sudo k3s ctr images import -

@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>vLLM Sleep Proxy Ops UI</title>
+    <link rel="stylesheet" href="/static/app.css?v=__STATIC_VERSION__">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">vLLM Sleep Proxy Operations</p>
+          <h1>Model State and Component Health</h1>
+          <p id="generated-at" class="subtle">warte auf Daten...</p>
+        </div>
+        <button id="refresh" class="action">Aktualisieren</button>
+      </header>
+
+      <section class="panel compact-panel">
+        <div class="panel-head">
+          <h2>Node Memory</h2>
+          <p>Pod-RAM, reclaimbarer Node-Cache und verfuegbarer Speicher pro GPU-Node</p>
+        </div>
+        <div id="node-memory-row" class="memory-row"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Component Diagram</h2>
+          <p>Gruen = healthy, gelb = degraded, rot = down</p>
+        </div>
+        <div class="diagram">
+          <div class="diagram-group">
+            <p class="diagram-group-title">Serving Path</p>
+            <div class="diagram-stack">
+              <div class="lane serving-lane">
+                <div data-component="litellm" class="node"></div>
+                <div class="arrow">→</div>
+                <div data-component="sleep-proxy" class="node"></div>
+                <div class="arrow">→</div>
+                <div data-component="vllm-router" class="node"></div>
+              </div>
+              <div class="diagram-attachments">
+                <div class="attachment-track attachment-litellm">
+                  <div class="attachment-arrow">↑</div>
+                  <div data-component="cpu-embeddings" class="node optional attachment-node"></div>
+                </div>
+                <div class="attachment-track attachment-router">
+                  <div class="attachment-arrow">↓</div>
+                  <div data-component="vllm-engines" class="node optional attachment-node"></div>
+                </div>
+              </div>
+              <div class="diagram-attachments">
+                <div class="attachment-track attachment-router">
+                  <div class="attachment-arrow">↓</div>
+                  <div data-component="whisper" class="node optional attachment-node"></div>
+                </div>
+              </div>
+              <div class="diagram-standalone">
+                <p class="diagram-group-title">Standalone UI</p>
+                <div class="lane standalone-lane">
+                  <div data-component="playground" class="node optional"></div>
+                  <div data-component="ops-ui" class="node optional"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Operations Summary</h2>
+          <p>Modelzustand, Routing-Anteile und Wake-Fehler in einer gemeinsamen Sicht</p>
+        </div>
+        <div class="summary-filter">
+          <label>
+            <span>Node</span>
+            <select id="summary-filter-node">
+              <option value="">Alle Nodes</option>
+            </select>
+          </label>
+        </div>
+        <section class="cards summary-cards" id="summary-cards"></section>
+        <section class="summary-breakdowns" id="summary-breakdowns"></section>
+        <div id="request-series" class="series"></div>
+        <div class="panel-head compact">
+          <h3>Letzter Fallback</h3>
+        </div>
+        <pre id="last-fallback" class="inline-json">noch keine Daten</pre>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Models</h2>
+          <p>Aktueller Zustand der lokalen Modelle</p>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Model</th>
+                <th>State</th>
+                <th>Node</th>
+                <th>Replicas</th>
+                <th>Inflight</th>
+              </tr>
+            </thead>
+            <tbody id="models-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel route-panel">
+        <div class="panel-head">
+          <h2>Routing and Requests</h2>
+          <p>Node, Modell und Anfragepfad gezielt eingrenzen</p>
+        </div>
+        <div class="route-layout">
+          <div class="filters">
+            <label>
+              <span>Node</span>
+              <select id="filter-node">
+                <option value="">Alle Nodes</option>
+              </select>
+            </label>
+            <label>
+              <span>Model</span>
+              <select id="filter-model">
+                <option value="">Alle Modelle</option>
+              </select>
+            </label>
+            <label>
+              <span>Path</span>
+              <select id="filter-path-kind">
+                <option value="">Alle Pfade</option>
+                <option value="direct">direct</option>
+                <option value="semantic-router">semantic-router</option>
+              </select>
+            </label>
+            <button id="clear-filters" class="action secondary">Zuruecksetzen</button>
+          </div>
+
+          <div class="route-grid">
+            <article class="panel nested-panel">
+              <div class="panel-head">
+                <h2>Recent Routing and Requests</h2>
+                <p>Kombinierte Sicht auf semantische Entscheidungen und tatsaechlich ausgefuehrte Requests</p>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Requested</th>
+                      <th>Path</th>
+                      <th>Rule</th>
+                      <th>Tool-Domaene</th>
+                      <th>Target</th>
+                      <th>Effective</th>
+                      <th>Node</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody id="routing-requests-body"></tbody>
+                </table>
+              </div>
+              <div class="table-pagination">
+                <button id="routing-requests-prev" class="action secondary compact" type="button">&lt;&lt;</button>
+                <label class="pagination-label">
+                  <span>Seite</span>
+                  <select id="routing-requests-page"></select>
+                </label>
+                <button id="routing-requests-next" class="action secondary compact" type="button">&gt;&gt;</button>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <script>
+      window.GPU_HUB_REFRESH_INTERVAL_SECONDS = __REFRESH_INTERVAL_SECONDS__;
+    </script>
+    <script src="/static/app.js?v=__STATIC_VERSION__"></script>
+  </body>
+</html>

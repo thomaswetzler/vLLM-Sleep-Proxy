@@ -1,0 +1,129 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "playground.fullname" . }}
+  labels:
+    {{- include "playground.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "playground.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "playground.selectorLabels" . | nindent 8 }}
+      annotations:
+        # Roll the pod when bootstrap JSON changes even if the image stays the same.
+        checksum/bootstrap: {{ include (print $.Template.BasePath "/configmap-bootstrap.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "playground.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      initContainers:
+        - name: bootstrap-playground
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - /bin/sh
+            - -ec
+          args:
+            - |
+              set -eu
+              # The main container runs from an emptyDir copy so runtime config
+              # files can be overlaid without rebuilding the image.
+              cp -R /home/playground/vllm-playground/. /workdir/
+              install -Dm0644 /bootstrap/remote-targets.json /workdir/vllm_playground/assets/remote-targets.json
+              install -Dm0644 /bootstrap/settings.json /homecfg/settings.json
+              install -Dm0644 /bootstrap/mcp_servers.json /homecfg/mcp_servers.json
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: app-root
+              mountPath: /workdir
+            - name: home-config
+              mountPath: /homecfg
+            - name: bootstrap-config
+              mountPath: /bootstrap
+      containers:
+        - name: playground
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 7860
+              protocol: TCP
+          env:
+            - name: WEBUI_PORT
+              value: "7860"
+            - name: KUBERNETES_NAMESPACE
+              value: {{ .Release.Namespace | quote }}
+            {{- if .Values.huggingfaceSecret.enabled }}
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.huggingfaceSecret.name }}
+                  key: {{ .Values.huggingfaceSecret.key }}
+                  optional: {{ .Values.huggingfaceSecret.optional }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /api/status
+              port: http
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            timeoutSeconds: 10
+            successThreshold: 1
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/features
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /api/status
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 18
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: app-root
+              mountPath: /home/playground/vllm-playground
+            - name: home-config
+              mountPath: /home/playground/.vllm-playground
+      volumes:
+        - name: app-root
+          # Writable app tree populated once by the init container.
+          emptyDir: {}
+        - name: home-config
+          # Stores the generated playground home directory and persisted settings.
+          emptyDir: {}
+        - name: bootstrap-config
+          configMap:
+            name: {{ include "playground.fullname" . }}-bootstrap
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -1,0 +1,17 @@
+{{- $existingClaim := default "" .Values.embeddings.pvc.existingClaim }}
+{{- if and .Values.embeddings.enabled .Values.embeddings.pvc.enabled (eq $existingClaim "") }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "vllm.embeddings.pvcName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vllm.embeddings.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.embeddings.pvc.accessMode | quote }}
+  resources:
+    requests:
+      storage: {{ .Values.embeddings.pvc.size | quote }}
+  storageClassName: {{ .Values.embeddings.pvc.storageClass | quote }}
+{{- end }}

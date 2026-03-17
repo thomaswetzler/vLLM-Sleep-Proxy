@@ -1,0 +1,220 @@
+{{- $sleepLevel := int .Values.sleepMode.level -}}
+{{- $warmupRequestTimeout := int .Values.autoSleepHook.warmupRequestTimeoutSeconds -}}
+{{- $sleepRequestTimeout := int .Values.autoSleepHook.sleepRequestTimeoutSeconds -}}
+{{- /*
+  vllm-scripts ConfigMap
+  Skripte werden per Volume in init- und Hauptcontainer gemountet (/scripts):
+    await-gpu-free.sh  - Init-Container: GPU-Mutex + VRAM-Check + RAM-Check
+    auto-sleep.sh      - vom Helm-Hook-Job genutzt: Warmup, sleep level, Mutex freigeben
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-scripts
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+data:
+  await-gpu-free.sh: |
+    #!/bin/sh
+    # Zufaelliger Startdelay (5-30s): verteilt gleichzeitige Pod-Starts zeitlich.
+    DELAY=$((RANDOM % 25 + 5))
+    echo "[gpu-wait] Warte ${DELAY}s (random spread)..."
+    sleep "$DELAY"
+
+    # --- GPU-Mutex ---
+    # Verhindert simultanes Laden zweier Modelle auf demselben GPU-Knoten.
+    # Mutex: /data/locks/gpu-loading-<node> (atomisch via mkdir).
+    # Timestamp in acquired_at fuer zeitbasierte Stale-Erkennung (> 25 min).
+    NODE=$(hostname | grep -oE 'lab[0-9]+' | head -1)
+    if [ -z "$NODE" ]; then NODE="default"; fi
+    LOCK_DIR=/data/locks
+    mkdir -p "$LOCK_DIR"
+    LOCK="$LOCK_DIR/gpu-loading-${NODE}"
+    echo "[gpu-wait] Versuche GPU-Mutex zu erwerben: $LOCK"
+    while true; do
+      if mkdir "$LOCK" 2>/dev/null; then
+        # Pod-Name + Timestamp in acquired_at speichern (fuer Stale-Erkennung)
+        printf '%s:%s\n' "$(hostname)" "$(date +%s)" > "$LOCK/acquired_at" 2>/dev/null || true
+        echo "[gpu-wait] GPU-Mutex acquired: $LOCK"
+        break
+      fi
+      LOCK_INFO=$(cat "$LOCK/acquired_at" 2>/dev/null)
+      LOCK_POD=$(echo "$LOCK_INFO" | cut -d':' -f1)
+      LOCK_TIME=$(echo "$LOCK_INFO" | cut -d':' -f2)
+      # Stale-Erkennung 1: Lock gehoert diesem Pod -> Pod wurde neu gestartet, Lock ist stale
+      if [ -n "$LOCK_POD" ] && [ "$LOCK_POD" = "$(hostname)" ]; then
+        echo "[gpu-wait] Staler Mutex (eigener Pod-Restart) - entferne lock..."
+        rm -rf "$LOCK" 2>/dev/null || true
+        continue
+      fi
+      # Stale-Erkennung 2: Zeitbasiert - Lock aelter als 10 Minuten
+      if [ -n "$LOCK_TIME" ]; then
+        NOW=$(date +%s)
+        AGE=$((NOW - LOCK_TIME))
+        if [ "$AGE" -gt 600 ]; then
+          echo "[gpu-wait] Staler Mutex (Alter=${AGE}s > 600s) - entferne lock..."
+          rm -rf "$LOCK" 2>/dev/null || true
+          continue
+        fi
+      fi
+      echo "[gpu-wait] GPU-Mutex belegt - warte 15s..."
+      sleep 15
+    done
+
+    # --- VRAM-Check ---
+    VRAM_THRESHOLD=1500
+    echo "[gpu-wait] Pruefe GPU-VRAM (Schwelle: ${VRAM_THRESHOLD} MB)..."
+    while true; do
+      MEM=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null | tr -d ' ')
+      if [ -z "$MEM" ]; then
+        echo "[gpu-wait] nvidia-smi nicht verfuegbar - ueberspringe VRAM-Check"
+        break
+      fi
+      if [ "$MEM" -lt "$VRAM_THRESHOLD" ]; then
+        echo "[gpu-wait] GPU-VRAM frei (${MEM} MB < ${VRAM_THRESHOLD} MB)"
+        break
+      fi
+      echo "[gpu-wait] GPU-VRAM belegt (${MEM} MB) - warte 15s..."
+      sleep 15
+    done
+
+    # --- RAM-Check ---
+    # Verhindert OOM wenn zwei Modelle gleichzeitig laden (VRAM frei, aber RAM knapp).
+    RAM_THRESHOLD=8000
+    echo "[gpu-wait] Pruefe RAM (Schwelle: ${RAM_THRESHOLD} MB)..."
+    while true; do
+      FREE_RAM=$(awk '/MemAvailable/ {printf "%.0f\n", $2/1024}' /proc/meminfo)
+      if [ -z "$FREE_RAM" ]; then
+        echo "[gpu-wait] /proc/meminfo nicht lesbar - ueberspringe RAM-Check"
+        break
+      fi
+      if [ "$FREE_RAM" -gt "$RAM_THRESHOLD" ]; then
+        echo "[gpu-wait] RAM verfuegbar (${FREE_RAM} MB > ${RAM_THRESHOLD} MB) -> starte vLLM"
+        break
+      fi
+      echo "[gpu-wait] RAM knapp (${FREE_RAM} MB) - warte 15s..."
+      sleep 15
+    done
+  auto-sleep.sh: |
+    #!/bin/sh
+    set -eu
+
+    ENGINE_URL="${ENGINE_URL:-http://localhost:8000}"
+    NODE="${NODE:-$(hostname | grep -oE 'lab[0-9]+' | head -1)}"
+    if [ -z "$NODE" ]; then NODE="default"; fi
+    TIMEOUT="${AUTO_SLEEP_TIMEOUT_SECONDS:-1800}"
+    START_TS=$(date +%s)
+    LOCK="/data/locks/gpu-loading-${NODE}"
+
+    remaining_time() {
+      NOW=$(date +%s)
+      LEFT=$((TIMEOUT - (NOW - START_TS)))
+      if [ "$LEFT" -lt 1 ]; then
+        LEFT=1
+      fi
+      printf '%s\n' "$LEFT"
+    }
+
+    timed_out() {
+      NOW=$(date +%s)
+      AGE=$((NOW - START_TS))
+      [ "$AGE" -ge "$TIMEOUT" ]
+    }
+
+    echo "[auto-sleep][$NODE] Warte auf Model-Ready (${ENGINE_URL}/health)..."
+    while true; do
+      if python3 -c "import os, urllib.request; urllib.request.urlopen(os.environ['ENGINE_URL'] + '/health', timeout=2)" 2>/dev/null; then
+        break
+      fi
+      NOW=$(date +%s)
+      AGE=$((NOW - START_TS))
+      if [ "$AGE" -ge "$TIMEOUT" ]; then
+        echo "[auto-sleep][$NODE] Timeout nach ${AGE}s beim Warten auf /health"
+        exit 1
+      fi
+      sleep 5
+    done
+
+    echo "[auto-sleep][$NODE] Warte auf API-Ready (${ENGINE_URL}/v1/models)..."
+    while true; do
+      if python3 -c "import os, urllib.request; urllib.request.urlopen(os.environ['ENGINE_URL'] + '/v1/models', timeout=5)" 2>/dev/null; then
+        break
+      fi
+      if timed_out; then
+        AGE=$(($(date +%s) - START_TS))
+        echo "[auto-sleep][$NODE] Timeout nach ${AGE}s beim Warten auf /v1/models"
+        rm -rf "$LOCK" 2>/dev/null \
+          && echo "[auto-sleep][$NODE] GPU-Mutex freigegeben: $LOCK" \
+          || echo "[auto-sleep][$NODE] GPU-Mutex Freigabe fehlgeschlagen: $LOCK"
+        exit 1
+      fi
+      sleep 5
+    done
+
+    # /health kommt bei einigen Modellen frueher als der erste stabile
+    # /chat/completions- und /sleep-Zyklus. Ein kurzer Guard reduziert diese
+    # transienten 500er, ohne den bestehenden Hook-Ablauf zu veraendern.
+    echo "[auto-sleep][$NODE] API bereit. Warte kurze Stabilisierung..."
+    sleep 10
+
+    echo "[auto-sleep][$NODE] Model bereit. Sende Testanfrage..."
+    while true; do
+      if WARMUP_OUTPUT=$(REMAINING_TIME="$(remaining_time)" python3 -c "
+    import json, os, urllib.request
+    base = os.environ['ENGINE_URL']
+    models = json.loads(urllib.request.urlopen(base + '/v1/models', timeout=10).read())
+    model_id = models['data'][0]['id']
+    payload = json.dumps({'model': model_id, 'messages': [{'role': 'user', 'content': 'Was ist 1 + 2?'}], 'max_tokens': 10}).encode()
+    req = urllib.request.Request(base + '/v1/chat/completions', data=payload, headers={'Content-Type': 'application/json'}, method='POST')
+    timeout_seconds = min({{ $warmupRequestTimeout }}, int(os.environ['REMAINING_TIME']))
+    resp = json.loads(urllib.request.urlopen(req, timeout=timeout_seconds).read())
+    print('[auto-sleep][' + os.environ['NODE'] + '] Testantwort von ' + model_id + ': ' + resp['choices'][0]['message']['content'])
+    " 2>&1); then
+        printf '%s\n' "$WARMUP_OUTPUT"
+        break
+      fi
+
+      printf '%s\n' "$WARMUP_OUTPUT"
+      if timed_out; then
+        AGE=$(($(date +%s) - START_TS))
+        echo "[auto-sleep][$NODE] Timeout nach ${AGE}s waehrend der Testanfrage"
+        rm -rf "$LOCK" 2>/dev/null \
+          && echo "[auto-sleep][$NODE] GPU-Mutex freigegeben: $LOCK" \
+          || echo "[auto-sleep][$NODE] GPU-Mutex Freigabe fehlgeschlagen: $LOCK"
+        exit 1
+      fi
+      echo "[auto-sleep][$NODE] Testanfrage noch nicht stabil - retry in 5s..."
+      sleep 5
+    done
+
+    echo "[auto-sleep][$NODE] Setze sleep level {{ $sleepLevel }}..."
+    while true; do
+      if REMAINING_TIME="$(remaining_time)" python3 -c "
+    import os, urllib.request
+    timeout_seconds = min({{ $sleepRequestTimeout }}, int(os.environ['REMAINING_TIME']))
+    urllib.request.urlopen(
+        urllib.request.Request(os.environ['ENGINE_URL'] + '/sleep?level={{ $sleepLevel }}', method='POST'),
+        timeout=timeout_seconds,
+    ).read()
+    " 2>/dev/null; then
+        echo "[auto-sleep][$NODE] Modell schlaeft (level={{ $sleepLevel }}) - bereit fuer Wake-on-Demand."
+        rm -rf "$LOCK" 2>/dev/null \
+          && echo "[auto-sleep][$NODE] GPU-Mutex freigegeben: $LOCK" \
+          || echo "[auto-sleep][$NODE] GPU-Mutex Freigabe fehlgeschlagen: $LOCK"
+        exit 0
+      fi
+
+      if timed_out; then
+        AGE=$(($(date +%s) - START_TS))
+        echo "[auto-sleep][$NODE] Sleep-Aufruf blieb nach ${AGE}s erfolglos."
+        rm -rf "$LOCK" 2>/dev/null \
+          && echo "[auto-sleep][$NODE] GPU-Mutex freigegeben: $LOCK" \
+          || echo "[auto-sleep][$NODE] GPU-Mutex Freigabe fehlgeschlagen: $LOCK"
+        exit 1
+      fi
+
+      echo "[auto-sleep][$NODE] Sleep-Aufruf noch nicht stabil - retry in 5s..."
+      sleep 5
+    done

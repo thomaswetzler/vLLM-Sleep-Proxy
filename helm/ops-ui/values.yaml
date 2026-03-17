@@ -1,0 +1,64 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/thomaswetzler/ops-ui
+  tag: latest
+  pullPolicy: Always
+
+service:
+  name: ops-ui-service
+  port: 8080
+  targetPort: 8080
+
+ingress:
+  enabled: true
+  className: cilium
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+  hosts:
+    - host: ops-ui.k3s.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: ops-ui-tls
+      hosts:
+        - ops-ui.k3s.example.com
+
+env:
+  sleepProxyUrl: http://sleep-proxy-service.vllm.svc.cluster.local:8080
+  vllmRouterUrl: http://vllm-router-service.vllm.svc.cluster.local:80
+  litellmUrl: http://lite-helm-litellm.vllm.svc.cluster.local:4000
+  embeddingsUrl: http://vllm-baai-bge-large-en-v15-cpu.vllm.svc.cluster.local:3000
+  whisperUrl: http://vllm-whisper-cpu-service.vllm.svc.cluster.local:80
+  opsUiUrl: http://ops-ui-service.vllm.svc.cluster.local:8080
+  playgroundUrl: ""
+  requestTimeoutSeconds: "10"
+  refreshIntervalSeconds: "5"
+  logLevel: info
+
+resources:
+  requests:
+    cpu: "100m"
+    memory: "128Mi"
+  limits:
+    cpu: "500m"
+    memory: "256Mi"
+
+probes:
+  readiness:
+    path: /health
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    failureThreshold: 3
+  liveness:
+    path: /health
+    initialDelaySeconds: 10
+    periodSeconds: 15
+    failureThreshold: 3
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

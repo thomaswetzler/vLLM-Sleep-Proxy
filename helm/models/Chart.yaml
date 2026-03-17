@@ -1,0 +1,6 @@
+apiVersion: v2
+name: model-loader
+description: Download Hugging Face models into a PVC for vLLM engines.
+type: application
+version: 0.1.0
+appVersion: "1.0"

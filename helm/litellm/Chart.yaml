@@ -1,0 +1,6 @@
+apiVersion: v2
+name: litellm
+description: LiteLLM northbound API layer for local vLLM, embeddings, and external providers
+type: application
+version: 0.1.0
+appVersion: "main-latest"

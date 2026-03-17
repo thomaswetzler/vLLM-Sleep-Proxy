@@ -1,0 +1,6 @@
+apiVersion: v2
+name: playground
+description: Helm chart for deploying vLLM Playground with preconfigured remote targets
+type: application
+version: 0.1.0
+appVersion: "0.3"

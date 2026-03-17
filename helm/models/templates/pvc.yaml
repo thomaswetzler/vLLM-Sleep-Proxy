@@ -1,0 +1,51 @@
+{{- if .Values.pvc.create }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.pvc.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "model-loader.labels" . | nindent 4 }}
+    {{- with .Values.pvc.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.pvc.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  accessModes:
+    - {{ .Values.pvc.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.pvc.size }}
+  {{- if .Values.pvc.storageClass }}
+  storageClassName: {{ .Values.pvc.storageClass }}
+  {{- end }}
+{{- end }}
+{{- if .Values.templatePvc.create }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.templatePvc.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "model-loader.labels" . | nindent 4 }}
+    {{- with .Values.templatePvc.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.templatePvc.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  accessModes:
+    - {{ .Values.templatePvc.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.templatePvc.size }}
+  {{- if .Values.templatePvc.storageClass }}
+  storageClassName: {{ .Values.templatePvc.storageClass }}
+  {{- end }}
+{{- end }}

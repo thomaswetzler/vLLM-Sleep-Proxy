@@ -1,0 +1,67 @@
+{{- if .Values.embeddings.enabled }}
+{{- $embPvcClaim := default (include "vllm.embeddings.pvcName" .) .Values.embeddings.pvc.existingClaim }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "vllm.embeddings.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vllm.embeddings.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.embeddings.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ default "embeddings-cpu" .Values.embeddings.name }}
+      app.kubernetes.io/component: embeddings
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ default "embeddings-cpu" .Values.embeddings.name }}
+        app.kubernetes.io/component: embeddings
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      containers:
+        - name: embeddings
+          image: "{{ .Values.embeddings.image.repository }}:{{ .Values.embeddings.image.tag }}"
+          imagePullPolicy: {{ .Values.embeddings.imagePullPolicy }}
+          args:
+            {{- toYaml .Values.embeddings.args | nindent 12 }}
+          ports:
+            - containerPort: {{ .Values.embeddings.port }}
+              name: http
+          startupProbe:
+            httpGet:
+              path: {{ .Values.embeddings.probes.startup.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.embeddings.probes.startup.initialDelaySeconds }}
+            periodSeconds: {{ .Values.embeddings.probes.startup.periodSeconds }}
+            failureThreshold: {{ .Values.embeddings.probes.startup.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.embeddings.probes.readiness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.embeddings.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.embeddings.probes.readiness.periodSeconds }}
+            failureThreshold: {{ .Values.embeddings.probes.readiness.failureThreshold }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.embeddings.probes.liveness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.embeddings.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.embeddings.probes.liveness.periodSeconds }}
+            failureThreshold: {{ .Values.embeddings.probes.liveness.failureThreshold }}
+          resources:
+            {{- toYaml .Values.embeddings.resources | nindent 12 }}
+          {{- if .Values.embeddings.pvc.enabled }}
+          volumeMounts:
+            - name: embeddings-data
+              mountPath: /data
+          {{- end }}
+      {{- if .Values.embeddings.pvc.enabled }}
+      volumes:
+        - name: embeddings-data
+          persistentVolumeClaim:
+            claimName: {{ $embPvcClaim }}
+      {{- end }}
+{{- end }}

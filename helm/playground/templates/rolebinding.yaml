@@ -1,0 +1,16 @@
+{{- if and .Values.rbac.create .Values.serviceAccount.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "playground.fullname" . }}
+  labels:
+    {{- include "playground.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "playground.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "playground.fullname" . }}
+{{- end }}
