@@ -263,7 +263,7 @@ undeploy-playground:
 # ── Build & push sleep-proxy image ───────────────────────────────────────────
 
 build:
-	docker build -t $(IMAGE_REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG) ./src/sleep-proxy
+	docker build --platform linux/amd64 -t $(IMAGE_REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG) ./src/sleep-proxy
 
 push: build
 	docker push $(IMAGE_REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG)

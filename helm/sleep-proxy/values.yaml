@@ -28,7 +28,7 @@ env:
   routerActionTimeoutSeconds: "120"
   # Einige Engines melden direkt nach wake_up() noch kurz 503/502/504.
   # Diese kleinen Startup-Fenster retried der Proxy transparent fuer den Client.
-  postWakeRetryAttempts: "3"
+  postWakeRetryAttempts: "15"
   postWakeRetryDelaySeconds: "2"
   # Modell nach erfolgreicher Inferenz wieder schlafen legen
   autoSleepEnabled: "true"
