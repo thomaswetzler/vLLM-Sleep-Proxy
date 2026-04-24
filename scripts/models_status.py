@@ -17,9 +17,12 @@ import urllib.request
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 
-def fetch_json(url: str, timeout: int = 20, method: str = "GET") -> Any:
+def fetch_json(url: str, timeout: int = 20, method: str = "GET", headers: Optional[Dict[str, str]] = None) -> Any:
     """Fetch JSON from a URL with a tiny standard-library-only client."""
     request = urllib.request.Request(url, method=method)
+    if headers:
+        for key, value in headers.items():
+            request.add_header(key, value)
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
 
@@ -414,9 +417,13 @@ def main() -> int:
 
     router_url = args.router_url.rstrip("/")
 
+    auth_header = None
+    if "LITELLM_MASTER_KEY" in os.environ:
+        auth_header = {"Authorization": f"Bearer {os.environ['LITELLM_MASTER_KEY']}"}
+
     try:
         try:
-            models_payload = fetch_json(args.models_url, timeout=10)
+            models_payload = fetch_json(args.models_url, timeout=10, headers=auth_header)
         except Exception as exc:
             warn(f"Gateway-Models-Endpunkt fehlgeschlagen, nutze Router-Fallback: {exc}")
             models_payload = fetch_json(router_url + "/v1/models", timeout=10)
@@ -462,7 +469,7 @@ def main() -> int:
         except RuntimeError as exc:
             return fail(str(exc))
         try:
-            refreshed_models_payload = fetch_json(args.models_url, timeout=10)
+            refreshed_models_payload = fetch_json(args.models_url, timeout=10, headers=auth_header)
         except Exception:
             refreshed_models_payload = fetch_json(router_url + "/v1/models", timeout=10)
         refreshed_engines_payload = fetch_json(router_url + "/engines", timeout=10)

@@ -18,9 +18,9 @@ export HELM_CONFIG_HOME
 export HELM_DATA_HOME
 
 LLM_ROUTER_URL   ?= http://llm-router.$(EXTERN_DOMAIN)
-LLM_GATEWAY_URL  ?= http://llm-router.$(EXTERN_DOMAIN)
+LLM_GATEWAY_URL  ?= https://litellm.$(EXTERN_DOMAIN)
 MODELS_URL       ?= $(LLM_GATEWAY_URL)/v1/models?include=node
-COMPLETIONS_URL  ?= $(LLM_GATEWAY_URL)/v1/completions
+COMPLETIONS_URL  ?= $(LLM_GATEWAY_URL)/v1/chat/completions
 SLEEP_LEVEL      ?= 1
 TEST_PROMPT      ?= Was ist 4 + 3?
 TEST_TEMPERATURE ?= 0.7
@@ -111,7 +111,7 @@ test:
 	@set -eu; \
 	response_file=$$(mktemp); models_file=$$(mktemp); completion_file=$$(mktemp); \
 	trap 'rm -f "$$response_file" "$$models_file" "$$completion_file"' EXIT HUP INT TERM; \
-	$(CURL) -fsS "$(MODELS_URL)" > "$$response_file"; \
+	$(CURL) -fsS -H "Authorization: Bearer $$LITELLM_MASTER_KEY" "$(MODELS_URL)" > "$$response_file"; \
 	$(JQ) -r '.data[].id' "$$response_file" 2>/dev/null > "$$models_file" || \
 		$(JQ) -r '.[]' "$$response_file" > "$$models_file"; \
 	count=$$(wc -l < "$$models_file" | tr -d '[:space:]'); \
@@ -126,9 +126,9 @@ test:
 		--arg prompt "$(TEST_PROMPT)" \
 		--argjson temperature "$(TEST_TEMPERATURE)" \
 		--argjson max_tokens "$(TEST_MAX_TOKENS)" \
-		'{model:$$model,prompt:$$prompt,temperature:$$temperature,max_tokens:$$max_tokens}'); \
+		'{model:$$model,messages:[{role:"user",content:$$prompt}],temperature:$$temperature,max_tokens:$$max_tokens}'); \
 	http_code=$$($(CURL) -sS -o "$$completion_file" -w '%{http_code}' "$(COMPLETIONS_URL)" \
-		-H 'Content-Type: application/json' -d "$$payload"); \
+		-H 'Content-Type: application/json' -H "Authorization: Bearer $$LITELLM_MASTER_KEY" -d "$$payload"); \
 	case "$$http_code" in 2??) $(JQ) < "$$completion_file" ;; \
 		*) printf 'HTTP %s\n' "$$http_code" >&2; $(JQ) < "$$completion_file" >&2; exit 1 ;; esac
 
