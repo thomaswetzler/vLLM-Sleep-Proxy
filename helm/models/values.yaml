@@ -45,8 +45,8 @@ loader:
       cpu: "2"
       memory: "8Gi"
   models:
-    # Kleiner Allrounder auf der kleineren GPU. Fuer das 8-GiB-Profil nutzen
-    # wir eine AWQ-Variante, halten den lokalen Pfad aber bewusst stabil.
+    # Kleine Vision-Language-Lane auf der kleineren GPU. Fuer das 8-GiB-Profil
+    # nutzen wir eine AWQ-Variante und halten den lokalen Pfad bewusst stabil.
     - id: gaunernst/gemma-3-4b-it-int4-awq
       enabled: true
       path: gemma-3-4b-it

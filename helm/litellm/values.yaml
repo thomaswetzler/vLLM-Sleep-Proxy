@@ -126,7 +126,7 @@ localModels:
     apiKey: not-used
     extraParams: {}
     modelInfo:
-      lane: small-allrounder
+      lane: vision-language
   - enabled: true
     alias: local/llama-3.1-8b-instruct
     upstreamModel: local/llama-3.1-8b-instruct
