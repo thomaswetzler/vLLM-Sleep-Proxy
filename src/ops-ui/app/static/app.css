@@ -350,18 +350,6 @@ h1 {
   gap: 1rem;
 }
 
-.diagram-stack {
-  display: grid;
-  gap: 1rem;
-}
-
-.diagram-group {
-  padding: 1rem;
-  border-radius: 20px;
-  border: 1px solid rgba(216, 207, 194, 0.9);
-  background: #fffdf8;
-}
-
 .diagram-group-title {
   margin: 0 0 0.85rem;
   font-size: 0.82rem;
@@ -376,94 +364,55 @@ h1 {
   font-size: 0.92rem;
 }
 
-.lane {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
+.diagram-band {
+  padding: 1.1rem 1.15rem;
+  border-radius: 22px;
+  border: 1px solid rgba(216, 207, 194, 0.9);
 }
 
-.serving-lane {
+.diagram-band-services {
+  background:
+    linear-gradient(180deg, rgba(232, 242, 238, 0.92), rgba(244, 250, 247, 0.98));
+}
+
+.diagram-band-models {
+  background:
+    linear-gradient(180deg, rgba(247, 241, 231, 0.96), rgba(255, 251, 244, 0.98));
+}
+
+.diagram-band-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+  margin-bottom: 0.95rem;
+}
+
+.diagram-row {
   display: grid;
-  grid-template-columns:
-    minmax(136px, 1fr) 28px
-    minmax(136px, 1fr) 28px
-    minmax(136px, 1fr) 28px
-    minmax(136px, 1fr) 28px
-    minmax(136px, 1fr) 28px
-    minmax(136px, 1fr) 28px
-    minmax(136px, 1fr);
-  align-items: center;
-  gap: 0.5rem;
-  overflow-x: auto;
-  padding-bottom: 0.2rem;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.9rem;
+  align-items: stretch;
+}
+
+[data-component-group][hidden] {
+  display: none !important;
 }
 
 .node {
-  min-width: 136px;
-  padding: 0.65rem 0.8rem;
-  border-radius: 18px;
-  border: 1px solid var(--line);
-  background: #fffdf8;
+  min-width: 0;
+  min-height: 110px;
+  padding: 0.95rem 1rem;
+  border-radius: 20px;
+  border: 1px solid rgba(216, 207, 194, 0.9);
+  background: rgba(255, 253, 248, 0.9);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    0 10px 24px rgba(55, 40, 10, 0.06);
 }
 
 .node.optional:empty {
   display: none;
-}
-
-.diagram-attachments {
-  display: grid;
-  grid-template-columns:
-    minmax(136px, 1fr) 28px
-    minmax(136px, 1fr) 28px
-    minmax(136px, 1fr) 28px
-    minmax(136px, 1fr) 28px
-    minmax(136px, 1fr) 28px
-    minmax(136px, 1fr) 28px
-    minmax(136px, 1fr);
-  gap: 0.5rem;
-  align-items: start;
-}
-
-.attachment-track {
-  display: grid;
-  justify-items: center;
-  gap: 0.45rem;
-  min-height: 138px;
-}
-
-.attachment-litellm {
-  grid-column: 1;
-}
-
-.attachment-semantic {
-  grid-column: 7;
-}
-
-.attachment-router {
-  grid-column: 13;
-}
-
-.attachment-arrow {
-  color: var(--muted);
-  font-size: 1.25rem;
-  line-height: 1;
-}
-
-.attachment-node {
-  width: 100%;
-  min-width: 0;
-}
-
-.diagram-standalone {
-  display: grid;
-  gap: 0.65rem;
-  justify-items: end;
-  margin-top: 0.4rem;
-}
-
-.standalone-lane {
-  justify-content: flex-end;
 }
 
 .node.ok {
@@ -484,7 +433,7 @@ h1 {
 .node-label {
   display: block;
   font-weight: 700;
-  font-size: 0.92rem;
+  font-size: 0.98rem;
   line-height: 1.2;
 }
 
@@ -687,27 +636,8 @@ th {
     grid-template-columns: 1fr;
   }
 
-  .diagram-attachments {
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  }
-
-  .attachment-litellm,
-  .attachment-semantic,
-  .attachment-router {
-    grid-column: auto;
-  }
-
-  .serving-lane {
-    display: flex;
-    flex-wrap: nowrap;
-  }
-
-  .diagram-standalone {
-    justify-items: stretch;
-  }
-
-  .standalone-lane {
-    justify-content: flex-start;
+  .diagram-band-head {
+    flex-direction: column;
   }
 
   .table-pagination {

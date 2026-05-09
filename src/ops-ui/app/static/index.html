@@ -31,41 +31,35 @@
           <p>Gruen = healthy, gelb = degraded, rot = down</p>
         </div>
         <div class="diagram">
-          <div class="diagram-group">
-            <p class="diagram-group-title">Serving Path</p>
-            <div class="diagram-stack">
-              <div class="lane serving-lane">
-                <div data-component="litellm" class="node"></div>
-                <div class="arrow">→</div>
-                <div data-component="sleep-proxy" class="node"></div>
-                <div class="arrow">→</div>
-                <div data-component="vllm-router" class="node"></div>
-              </div>
-              <div class="diagram-attachments">
-                <div class="attachment-track attachment-litellm">
-                  <div class="attachment-arrow">↑</div>
-                  <div data-component="cpu-embeddings" class="node optional attachment-node"></div>
-                </div>
-                <div class="attachment-track attachment-router">
-                  <div class="attachment-arrow">↓</div>
-                  <div data-component="vllm-engines" class="node optional attachment-node"></div>
-                </div>
-              </div>
-              <div class="diagram-attachments">
-                <div class="attachment-track attachment-router">
-                  <div class="attachment-arrow">↓</div>
-                  <div data-component="whisper" class="node optional attachment-node"></div>
-                </div>
-              </div>
-              <div class="diagram-standalone">
-                <p class="diagram-group-title">Standalone UI</p>
-                <div class="lane standalone-lane">
-                  <div data-component="playground" class="node optional"></div>
-                  <div data-component="ops-ui" class="node optional"></div>
-                </div>
+          <section class="diagram-band diagram-band-services" data-component-group>
+            <div class="diagram-band-head">
+              <div>
+                <p class="diagram-group-title">Services and UI</p>
+                <p class="diagram-group-note">Steuerung, Routing und Oberflaechen in einer gemeinsamen Reihe.</p>
               </div>
             </div>
-          </div>
+            <div class="diagram-row">
+              <div data-component="litellm" class="node"></div>
+              <div data-component="sleep-proxy" class="node"></div>
+              <div data-component="vllm-router" class="node"></div>
+              <div data-component="ops-ui" class="node optional"></div>
+              <div data-component="playground" class="node optional"></div>
+            </div>
+          </section>
+
+          <section class="diagram-band diagram-band-models" data-component-group>
+            <div class="diagram-band-head">
+              <div>
+                <p class="diagram-group-title">Models and Runtimes</p>
+                <p class="diagram-group-note">Inference-Ziele und spezialisierte Laufzeitdienste in einer zweiten Reihe.</p>
+              </div>
+            </div>
+            <div class="diagram-row">
+              <div data-component="whisper" class="node optional"></div>
+              <div data-component="vllm-engines" class="node optional"></div>
+              <div data-component="cpu-embeddings" class="node optional"></div>
+            </div>
+          </section>
         </div>
       </section>
 

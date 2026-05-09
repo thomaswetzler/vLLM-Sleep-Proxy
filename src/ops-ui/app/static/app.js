@@ -479,23 +479,25 @@ function renderComponents(snapshot) {
   const components = new Map((snapshot.components || []).map((item) => [item.id, item]));
   for (const node of document.querySelectorAll("[data-component]")) {
     const component = components.get(node.dataset.component);
-    const attachmentTrack = node.closest(".attachment-track");
     if (!component) {
       node.innerHTML = "";
       node.className = "node optional";
-      if (attachmentTrack) {
-        attachmentTrack.style.display = "none";
-      }
+      node.dataset.populated = "false";
       continue;
     }
-    if (attachmentTrack) {
-      attachmentTrack.style.display = "";
-    }
+    node.dataset.populated = "true";
     node.className = `node ${component.status || "down"}`;
     node.innerHTML = `
       <span class="node-label">${escapeHtml(component.label)}</span>
       <span class="node-detail">${escapeHtml(component.detail || component.status || "-")}</span>
     `;
+  }
+
+  for (const group of document.querySelectorAll("[data-component-group]")) {
+    const hasVisibleNode = [...group.querySelectorAll("[data-component]")].some((node) => (
+      node.dataset.populated === "true"
+    ));
+    group.hidden = !hasVisibleNode;
   }
 }
 
