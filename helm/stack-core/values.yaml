@@ -1,0 +1,8 @@
+litellm:
+  # Keep the service DNS stable for ops-ui and playground defaults.
+  fullnameOverride: lite-helm-litellm
+
+playground:
+  # Preserve the existing service/ingress object names when deployed via the
+  # umbrella release.
+  fullnameOverride: playground

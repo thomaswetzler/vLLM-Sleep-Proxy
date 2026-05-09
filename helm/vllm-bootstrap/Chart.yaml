@@ -1,0 +1,6 @@
+apiVersion: v2
+name: vllm-bootstrap
+description: Bootstrap job that warms up vLLM engines and puts them into sleep mode.
+type: application
+version: 0.1.0
+appVersion: "1.0"

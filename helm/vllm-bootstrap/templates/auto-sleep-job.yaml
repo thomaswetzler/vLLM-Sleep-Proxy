@@ -1,30 +1,32 @@
 {{- if .Values.autoSleepHook.enabled }}
+{{- $runId := include "vllm-bootstrap.runId" . -}}
+{{- $jobName := printf "%s-auto-sleep-%s" (include "vllm-bootstrap.fullname" .) $runId | trunc 63 | trimSuffix "-" -}}
+{{- $coreRelease := .Values.coreReleaseName -}}
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ .Release.Name }}-auto-sleep
+  name: {{ $jobName }}
   namespace: {{ .Release.Namespace }}
   labels:
-    app.kubernetes.io/managed-by: {{ .Release.Service }}
-    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
-  annotations:
-    "helm.sh/hook": post-install,post-upgrade
-    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    {{- include "vllm-bootstrap.labels" . | nindent 4 }}
+    vllm-bootstrap/run-id: {{ $runId | quote }}
 spec:
   backoffLimit: 0
   activeDeadlineSeconds: {{ add (int .Values.autoSleepHook.timeoutSeconds) 300 }}
-  ttlSecondsAfterFinished: 300
+  {{- if .Values.autoSleepHook.ttlSecondsAfterFinished }}
+  ttlSecondsAfterFinished: {{ .Values.autoSleepHook.ttlSecondsAfterFinished }}
+  {{- end }}
   template:
     metadata:
       labels:
-        app.kubernetes.io/managed-by: {{ .Release.Service }}
-        helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+        {{- include "vllm-bootstrap.labels" . | nindent 8 }}
+        vllm-bootstrap/run-id: {{ $runId | quote }}
     spec:
       restartPolicy: Never
       containers:
         - name: auto-sleep
           image: {{ .Values.autoSleepHook.image | quote }}
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: {{ .Values.autoSleepHook.imagePullPolicy }}
           env:
             - name: AUTO_SLEEP_TIMEOUT_SECONDS
               value: {{ .Values.autoSleepHook.timeoutSeconds | quote }}
@@ -36,7 +38,7 @@ spec:
               {{- range $modelSpec := (index .Values "vllm-stack").servingEngineSpec.modelSpec }}
               (
                 NODE={{ default "default" $modelSpec.nodeName | quote }}
-                ENGINE_URL={{ printf "http://%s-%s-engine-service:80" $.Release.Name $modelSpec.name | quote }}
+                ENGINE_URL={{ printf "http://%s-%s-engine-service:80" $coreRelease $modelSpec.name | quote }}
                 export NODE ENGINE_URL
                 /scripts/auto-sleep.sh
               ) &
@@ -55,7 +57,7 @@ spec:
       volumes:
         - name: vllm-scripts
           configMap:
-            name: {{ .Release.Name }}-scripts
+            name: {{ printf "%s-scripts" $coreRelease }}
             defaultMode: 0755
         - name: preloaded-model-cache
           persistentVolumeClaim:

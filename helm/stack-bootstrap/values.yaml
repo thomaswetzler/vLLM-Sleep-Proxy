@@ -1,0 +1,16 @@
+vllm-bootstrap:
+  # The runtime stack is installed through the core umbrella release using the
+  # release name "vllm", so the bootstrap job targets that stable DNS prefix.
+  coreReleaseName: vllm
+  # Keep in sync with helm/vllm/values.yaml modelSpec names/node placements.
+  vllm-stack:
+    servingEngineSpec:
+      modelSpec:
+        - name: llama31-8b-instruct-lab01-gpu
+          nodeName: lab01
+        - name: qwen25-14b-instruct-lab01-gpu
+          nodeName: lab01
+        - name: gemma3-4b-it-lab02-gpu
+          nodeName: lab02
+        - name: qwen25-coder-7b-instruct-lab02-gpu
+          nodeName: lab02

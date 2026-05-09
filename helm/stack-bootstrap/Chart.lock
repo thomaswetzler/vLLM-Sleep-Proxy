@@ -1,0 +1,6 @@
+dependencies:
+- name: vllm-bootstrap
+  repository: file://../vllm-bootstrap
+  version: 0.1.0
+digest: sha256:71425c7d8c0c2758339245096db44d3af3c232d702e0094fa3b9c5c466c06840
+generated: "2026-05-09T11:39:21.67617+02:00"

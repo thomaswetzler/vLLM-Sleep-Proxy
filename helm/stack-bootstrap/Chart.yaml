@@ -1,0 +1,11 @@
+apiVersion: v2
+name: stack-bootstrap
+description: Umbrella chart for long-running bootstrap jobs that prepare the runtime stack.
+type: application
+version: 0.1.0
+appVersion: "1.0"
+
+dependencies:
+  - name: vllm-bootstrap
+    version: 0.1.0
+    repository: file://../vllm-bootstrap

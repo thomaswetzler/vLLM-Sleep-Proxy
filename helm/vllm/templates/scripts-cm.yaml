@@ -5,7 +5,7 @@
   vllm-scripts ConfigMap
   Skripte werden per Volume in init- und Hauptcontainer gemountet (/scripts):
     await-gpu-free.sh  - Init-Container: GPU-Mutex + VRAM-Check + RAM-Check
-    auto-sleep.sh      - vom Helm-Hook-Job genutzt: Warmup, sleep level, Mutex freigeben
+    auto-sleep.sh      - vom separaten Bootstrap-Job genutzt: Warmup, sleep level, Mutex freigeben
 */ -}}
 apiVersion: v1
 kind: ConfigMap

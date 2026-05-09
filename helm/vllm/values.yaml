@@ -12,9 +12,12 @@ autoSleepHook:
   timeoutSeconds: 1800
   warmupRequestTimeoutSeconds: 300
   sleepRequestTimeoutSeconds: 120
+  # Der Bootstrap-Release setzt hier pro Lauf eine eindeutige Kennung, damit
+  # der Warmup-/Auto-Sleep-Job bei jedem Deploy neu erstellt wird.
+  runId: ""
 
 sleepMode:
-  # vLLM sleep level used by the auto-sleep hook job.
+  # vLLM sleep level used by the separate auto-sleep bootstrap job.
   # Level 1: offloads KV cache + weights to CPU RAM — fast wake-up (recommended).
   # Level 2: releases all GPU memory incl. weights — slower wake-up, broken for AWQ models.
   level: 1

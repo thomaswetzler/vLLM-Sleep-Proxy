@@ -26,6 +26,11 @@ TEST_PROMPT      ?= Was ist 4 + 3?
 TEST_TEMPERATURE ?= 0.7
 TEST_MAX_TOKENS  ?= 220
 HELM_TIMEOUT     ?= 35m
+BOOTSTRAP_WAIT_TIMEOUT ?= 90m
+CORE_RELEASE     ?= vllm
+BOOTSTRAP_RELEASE ?= vllm-bootstrap
+BOOTSTRAP_RUN_ID ?= $(shell date +%Y%m%d%H%M%S)
+BOOTSTRAP_JOB_NAME ?= $(BOOTSTRAP_RELEASE)-auto-sleep-$(BOOTSTRAP_RUN_ID)
 
 # CPU companion service names (derived from release name + values.yaml)
 EMBEDDINGS_SVC   ?= vllm-baai-bge-large-en-v15-cpu
@@ -51,8 +56,8 @@ MODEL_DIRS  ?= baai-bge-large-en-v1.5 gemma-3-4b-it llama-3.1-8b-instruct \
 
 .PHONY: help status engines-status models toggle-model test test-embedding test-whisper \
         deps model-download check-models \
-        deploy deploy-vllm deploy-sleep-proxy deploy-litellm deploy-ops-ui deploy-playground \
-        undeploy undeploy-vllm undeploy-sleep-proxy undeploy-litellm undeploy-ops-ui undeploy-playground \
+        deploy deploy-core deploy-bootstrap deploy-vllm deploy-sleep-proxy deploy-litellm deploy-ops-ui deploy-playground \
+        undeploy undeploy-core undeploy-bootstrap undeploy-vllm undeploy-sleep-proxy undeploy-litellm undeploy-ops-ui undeploy-playground \
         build push
 
 help:
@@ -62,12 +67,14 @@ help:
 		'  ──────────────────────────────────────────────────────' \
 		'  make model-download     Download model weights onto shared PVC (needs HUGGING_FACE_TOKEN)' \
 		'  make check-models      Check model files on shared PVC for completeness' \
-		'  make deploy             Deploy sleep-proxy + vllm stack + litellm' \
-		'  make deploy-sleep-proxy Deploy only the sleep-proxy service' \
-		'  make deploy-vllm        Deploy only the vllm stack (router + engine pods)' \
-		'  make deploy-litellm     Deploy LiteLLM unified proxy (requires LITELLM_MASTER_KEY)' \
-		'  make deploy-ops-ui      Deploy ops-ui monitoring dashboard' \
-		'  make deploy-playground  Deploy vLLM Playground browser UI' \
+		'  make deploy             Deploy runtime umbrella + bootstrap umbrella' \
+		'  make deploy-core        Deploy runtime umbrella chart (router, proxy, gateway, UIs)' \
+		'  make deploy-bootstrap   Run bootstrap umbrella chart and wait for auto-sleep completion' \
+		'  make deploy-vllm        Legacy alias for make deploy-core' \
+		'  make deploy-sleep-proxy Direct chart deploy: only the sleep-proxy service' \
+		'  make deploy-litellm     Direct chart deploy: only LiteLLM unified proxy' \
+		'  make deploy-ops-ui      Direct chart deploy: only ops-ui monitoring dashboard' \
+		'  make deploy-playground  Direct chart deploy: only vLLM Playground browser UI' \
 		'  make undeploy           Remove all releases from the cluster' \
 		'  make status             Show engine sleep state + available models' \
 		'  make engines-status     Show sleep status of all engines via router API' \
@@ -168,7 +175,7 @@ test-whisper:
 # ── Helm dependencies ─────────────────────────────────────────────────────────
 
 deps:
-	@for chart in helm/vllm; do \
+	@for chart in helm/vllm helm/stack-core helm/stack-bootstrap; do \
 		if grep -q '^dependencies:' "$$chart/Chart.yaml" 2>/dev/null; then \
 			printf 'Updating dependencies for %s\n' "$$chart"; \
 			$(HELM) dependency update "$$chart"; \
@@ -195,18 +202,55 @@ check-models:
 
 # ── Deploy ────────────────────────────────────────────────────────────────────
 
-deploy: deploy-sleep-proxy deploy-vllm deploy-litellm deploy-ops-ui deploy-playground
+deploy: deploy-core deploy-bootstrap
+
+deploy-core: deps
+	@test -n "$$LITELLM_MASTER_KEY" || { \
+		printf 'LITELLM_MASTER_KEY is not set. Set it in .env:\n  LITELLM_MASTER_KEY=sk-...\n' >&2; exit 1; }
+	@test -n "$(EXTERN_DOMAIN)" || { \
+		printf 'EXTERN_DOMAIN is not set. Set it in .env:\n  EXTERN_DOMAIN=k3s.yourdomain.io\n' >&2; exit 1; }
+	$(HELM) upgrade --install "$(CORE_RELEASE)" ./helm/stack-core \
+		-f ./helm/stack-core/values.yaml \
+		-n "$(NAMESPACE)" --create-namespace \
+		--set-string vllm.vllm-stack.routerSpec.ingress.hosts[0].host="llm-router.$(EXTERN_DOMAIN)" \
+		--set-string vllm.vllm-stack.routerSpec.ingress.hosts[0].paths[0].path="/" \
+		--set-string vllm.vllm-stack.routerSpec.ingress.hosts[0].paths[0].pathType="Prefix" \
+		--set-string litellm.secret.data.masterKey="$$LITELLM_MASTER_KEY" \
+		--set-string litellm.ingress.hosts[0].host="litellm.$(EXTERN_DOMAIN)" \
+		--set-string litellm.ingress.hosts[0].paths[0].path="/" \
+		--set-string litellm.ingress.hosts[0].paths[0].pathType="Prefix" \
+		--set-string litellm.ingress.tls[0].hosts[0]="litellm.$(EXTERN_DOMAIN)" \
+		--set-string ops-ui.ingress.hosts[0].host="ops-ui.$(EXTERN_DOMAIN)" \
+		--set-string ops-ui.ingress.hosts[0].paths[0].path="/" \
+		--set-string ops-ui.ingress.hosts[0].paths[0].pathType="Prefix" \
+		--set-string ops-ui.ingress.tls[0].hosts[0]="ops-ui.$(EXTERN_DOMAIN)" \
+		--set-string playground.ingress.hosts[0].host="vllm-playground.$(EXTERN_DOMAIN)" \
+		--set-string playground.ingress.hosts[0].paths[0].path="/" \
+		--set-string playground.ingress.hosts[0].paths[0].pathType="Prefix" \
+		--set-string playground.ingress.tls[0].hosts[0]="vllm-playground.$(EXTERN_DOMAIN)" \
+		--timeout "$(HELM_TIMEOUT)"
+
+deploy-bootstrap: deps
+	$(HELM) upgrade --install "$(BOOTSTRAP_RELEASE)" ./helm/stack-bootstrap \
+		-f ./helm/stack-bootstrap/values.yaml \
+		-n "$(NAMESPACE)" --create-namespace \
+		--set-string vllm-bootstrap.autoSleepHook.runId="$(BOOTSTRAP_RUN_ID)" \
+		--timeout "$(HELM_TIMEOUT)"
+	@printf 'Waiting for bootstrap job %s ...\n' "$(BOOTSTRAP_JOB_NAME)"; \
+	$(KUBECTL) wait -n "$(NAMESPACE)" --for=create job/$(BOOTSTRAP_JOB_NAME) --timeout=120s; \
+	if ! $(KUBECTL) wait -n "$(NAMESPACE)" --for=condition=complete job/$(BOOTSTRAP_JOB_NAME) --timeout="$(BOOTSTRAP_WAIT_TIMEOUT)"; then \
+		printf '\nBootstrap job did not complete successfully.\n' >&2; \
+		$(KUBECTL) describe job "$(BOOTSTRAP_JOB_NAME)" -n "$(NAMESPACE)" >&2 || true; \
+		printf '\nBootstrap logs:\n' >&2; \
+		$(KUBECTL) logs job/$(BOOTSTRAP_JOB_NAME) -n "$(NAMESPACE)" --all-containers=true >&2 || true; \
+		exit 1; \
+	fi
+
+deploy-vllm: deploy-core
 
 deploy-sleep-proxy:
 	$(HELM) upgrade --install sleep-proxy ./helm/sleep-proxy \
 		-n "$(NAMESPACE)" --create-namespace --timeout "$(HELM_TIMEOUT)"
-
-deploy-vllm: deps
-	$(HELM) upgrade --install vllm ./helm/vllm \
-		-f ./helm/vllm/values.yaml \
-		-n "$(NAMESPACE)" --create-namespace \
-		--set vllm-stack.routerSpec.ingress.hosts[0].host="llm-router.$(EXTERN_DOMAIN)" \
-		--timeout "$(HELM_TIMEOUT)"
 
 deploy-litellm:
 	@test -n "$$LITELLM_MASTER_KEY" || { \
@@ -243,10 +287,16 @@ deploy-playground:
 
 # ── Undeploy ──────────────────────────────────────────────────────────────────
 
-undeploy: undeploy-litellm undeploy-vllm undeploy-sleep-proxy undeploy-ops-ui undeploy-playground
+undeploy: undeploy-bootstrap undeploy-core
+
+undeploy-core:
+	$(HELM) uninstall --ignore-not-found "$(CORE_RELEASE)" -n "$(NAMESPACE)"
+
+undeploy-bootstrap:
+	$(HELM) uninstall --ignore-not-found "$(BOOTSTRAP_RELEASE)" -n "$(NAMESPACE)"
 
 undeploy-vllm:
-	$(HELM) uninstall vllm -n "$(NAMESPACE)"
+	$(HELM) uninstall --ignore-not-found "$(CORE_RELEASE)" -n "$(NAMESPACE)"
 
 undeploy-sleep-proxy:
 	$(HELM) uninstall sleep-proxy -n "$(NAMESPACE)"
