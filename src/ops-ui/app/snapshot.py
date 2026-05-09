@@ -153,6 +153,7 @@ def _engine_component_from_models(models: List[Dict[str, Any]]) -> Dict[str, Any
         "models": [
             {
                 "label": _model_display_name(str(item.get("id", "-") or "-")),
+                "node": str((item.get("nodes") or [item.get("node") or "-"])[0] or "-"),
                 "status": str(item.get("state", "unknown") or "unknown"),
             }
             for item in models
@@ -325,6 +326,7 @@ def _cpu_component_from_models(models: List[Dict[str, Any]]) -> Dict[str, Any]:
         "models": [
             {
                 "label": str(model.get("label", model.get("id", "-")) or "-"),
+                "node": str((model.get("nodes") or [model.get("node") or "-"])[0] or "-"),
                 "status": str(model.get("state", "unknown") or "unknown"),
             }
             for model in models

@@ -468,6 +468,22 @@ h1 {
   word-break: break-word;
 }
 
+.node-model-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  flex-shrink: 0;
+}
+
+.node-model-node {
+  font-size: 0.84rem;
+  line-height: 1.25;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
 .node-model-row .pill {
   font-size: 0.84rem;
 }

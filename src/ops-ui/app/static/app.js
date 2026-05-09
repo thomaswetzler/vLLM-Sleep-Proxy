@@ -1,7 +1,6 @@
 const summaryContainer = document.getElementById("summary-cards");
 const generatedAt = document.getElementById("generated-at");
 const nodeMemoryRow = document.getElementById("node-memory-row");
-const modelsBody = document.getElementById("models-body");
 const routingRequestsBody = document.getElementById("routing-requests-body");
 const routingRequestsPrev = document.getElementById("routing-requests-prev");
 const routingRequestsNext = document.getElementById("routing-requests-next");
@@ -502,7 +501,10 @@ function renderComponents(snapshot) {
           ${component.models.map((item) => `
             <div class="node-model-row">
               <span class="node-model-name">${escapeHtml(item.label || "-")}</span>
-              ${pill(item.status || "unknown")}
+              <span class="node-model-meta">
+                ${item.node ? `<span class="node-model-node">${escapeHtml(item.node)}</span>` : ""}
+                ${pill(item.status || "unknown")}
+              </span>
             </div>
           `).join("")}
         </div>
@@ -529,18 +531,6 @@ function renderComponents(snapshot) {
 function renderFallback(snapshot) {
   const fallback = snapshot.routing?.last_fallback;
   lastFallback.textContent = fallback ? JSON.stringify(fallback, null, 2) : "Noch kein Fallback erfasst.";
-}
-
-function renderModels(snapshot) {
-  modelsBody.innerHTML = (snapshot.vllm_models || []).map((model) => `
-    <tr>
-      <td>${escapeHtml(model.id)}</td>
-      <td>${pill(model.state)}</td>
-      <td>${escapeHtml((model.nodes || []).join(", ") || model.node || "-")}</td>
-      <td>${escapeHtml(model.replicas ?? 0)}</td>
-      <td>${escapeHtml(model.engine_inflight ?? 0)}</td>
-    </tr>
-  `).join("");
 }
 
 function findTargetForRequest(request, decisions) {
@@ -641,7 +631,6 @@ function render(snapshot) {
   renderSeries(summaryFiltered);
   renderComponents(snapshot);
   renderFallback(summaryFiltered);
-  renderModels(snapshot);
   renderRoutingRequests(routeFiltered);
 }
 
