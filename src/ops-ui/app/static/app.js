@@ -146,21 +146,29 @@ function modelNodesMap(snapshot) {
 function populateFilters(snapshot) {
   const previous = currentFilters();
   const previousSummary = currentSummaryFilter();
-  const nodes = uniqueSorted((snapshot.nodes || []).map((node) => node.name));
+  const summaryNodes = uniqueSorted((snapshot.nodes || []).map((node) => node.name));
+  const routeNodes = uniqueSorted([
+    ...(snapshot.nodes || []).map((node) => node.name),
+    ...(snapshot.models || []).flatMap((model) => (
+      Array.isArray(model.nodes) && model.nodes.length
+        ? model.nodes
+        : (model.node ? [model.node] : [])
+    )),
+  ]);
   const models = uniqueSorted((snapshot.models || []).map((model) => model.id));
 
-  summaryFilterNode.innerHTML = '<option value="">Alle Nodes</option>' + nodes.map((node) => (
+  summaryFilterNode.innerHTML = '<option value="">Alle Nodes</option>' + summaryNodes.map((node) => (
     `<option value="${escapeHtml(node)}">${escapeHtml(node)}</option>`
   )).join("");
-  filterNode.innerHTML = '<option value="">Alle Nodes</option>' + nodes.map((node) => (
+  filterNode.innerHTML = '<option value="">Alle Nodes</option>' + routeNodes.map((node) => (
     `<option value="${escapeHtml(node)}">${escapeHtml(node)}</option>`
   )).join("");
   filterModel.innerHTML = '<option value="">Alle Modelle</option>' + models.map((model) => (
     `<option value="${escapeHtml(model)}">${escapeHtml(model)}</option>`
   )).join("");
 
-  summaryFilterNode.value = nodes.includes(previousSummary.node) ? previousSummary.node : "";
-  filterNode.value = nodes.includes(previous.node) ? previous.node : "";
+  summaryFilterNode.value = summaryNodes.includes(previousSummary.node) ? previousSummary.node : "";
+  filterNode.value = routeNodes.includes(previous.node) ? previous.node : "";
   filterModel.value = models.includes(previous.model) ? previous.model : "";
   filterPathKind.value = previous.pathKind;
 }
@@ -227,7 +235,7 @@ function applySummaryFilter(snapshot) {
     return snapshot;
   }
 
-  const models = (snapshot.models || []).filter((model) => {
+  const vllmModels = (snapshot.vllm_models || []).filter((model) => {
     const nodes = Array.isArray(model.nodes) && model.nodes.length
       ? model.nodes
       : (model.node ? [model.node] : []);
@@ -246,7 +254,7 @@ function applySummaryFilter(snapshot) {
 
   return {
     ...snapshot,
-    models,
+    vllm_models: vllmModels,
     requests,
     routing: {
       ...(snapshot.routing || {}),
@@ -320,10 +328,11 @@ function renderSummary(snapshot) {
   const requests = snapshot.requests || [];
   const statusCounts = countStatuses(requests);
   const totalRequests = requests.length;
+  const vllmModels = snapshot.vllm_models || [];
   const cards = [
-    ["Models", (snapshot.models || []).length],
-    ["Awake", (snapshot.models || []).filter((item) => item.state === "awake").length],
-    ["Sleeping", (snapshot.models || []).filter((item) => item.state === "sleeping").length],
+    ["Models", vllmModels.length],
+    ["Awake", vllmModels.filter((item) => item.state === "awake").length],
+    ["Sleeping", vllmModels.filter((item) => item.state === "sleeping").length],
     ["Wake-Fehler", statusCounts.wake_failed ?? 0],
     ["Requests", totalRequests],
     ["Fehler", statusCounts.error ?? 0],
@@ -487,9 +496,25 @@ function renderComponents(snapshot) {
     }
     node.dataset.populated = "true";
     node.className = `node ${component.status || "down"}`;
+    const modelList = Array.isArray(component.models) && component.models.length
+      ? `
+        <div class="node-model-list">
+          ${component.models.map((item) => `
+            <div class="node-model-row">
+              <span class="node-model-name">${escapeHtml(item.label || "-")}</span>
+              ${pill(item.status || "unknown")}
+            </div>
+          `).join("")}
+        </div>
+      `
+      : "";
+    const detail = component.detail
+      ? `<span class="node-detail">${escapeHtml(component.detail)}</span>`
+      : "";
     node.innerHTML = `
       <span class="node-label">${escapeHtml(component.label)}</span>
-      <span class="node-detail">${escapeHtml(component.detail || component.status || "-")}</span>
+      ${detail}
+      ${modelList}
     `;
   }
 
@@ -507,7 +532,7 @@ function renderFallback(snapshot) {
 }
 
 function renderModels(snapshot) {
-  modelsBody.innerHTML = (snapshot.models || []).map((model) => `
+  modelsBody.innerHTML = (snapshot.vllm_models || []).map((model) => `
     <tr>
       <td>${escapeHtml(model.id)}</td>
       <td>${pill(model.state)}</td>

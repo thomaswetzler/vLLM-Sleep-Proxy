@@ -6,6 +6,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
+import yaml
 
 from .config import settings
 
@@ -116,6 +117,23 @@ def _model_summary(models: List[Dict[str, Any]]) -> Dict[str, int]:
     return summary
 
 
+def _model_display_name(model_id: str) -> str:
+    """Shorten local model ids for compact diagram rendering."""
+    if model_id.startswith("local/"):
+        return model_id.split("/", 1)[1]
+    if model_id.startswith("openai/"):
+        return model_id.split("/", 1)[1]
+    return model_id
+
+
+def _normalize_runtime_base(url: str) -> str:
+    """Normalise API base URLs for stable matching across /v1 variants."""
+    normalized = str(url or "").rstrip("/")
+    if normalized.endswith("/v1"):
+        return normalized[:-3]
+    return normalized
+
+
 def _engine_component_from_models(models: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Represent the serving engines as one diagram box."""
     if not models:
@@ -124,21 +142,193 @@ def _engine_component_from_models(models: List[Dict[str, Any]]) -> Dict[str, Any
             "label": "vLLM Engines",
             "status": "down",
             "detail": "no models discovered",
+            "models": [],
         }
-
-    awake = sum(1 for item in models if item.get("state") == "awake")
-    sleeping = sum(1 for item in models if item.get("state") == "sleeping")
-    mixed = sum(1 for item in models if item.get("state") == "mixed")
-
-    detail = f"{awake} awake, {sleeping} sleeping"
-    if mixed:
-        detail += f", {mixed} mixed"
 
     return {
         "id": "vllm-engines",
         "label": "vLLM Engines",
         "status": "ok" if models else "down",
-        "detail": detail,
+        "detail": "",
+        "models": [
+            {
+                "label": _model_display_name(str(item.get("id", "-") or "-")),
+                "status": str(item.get("state", "unknown") or "unknown"),
+            }
+            for item in models
+        ],
+    }
+
+
+def _litellm_model_entries_from_configmap(payload: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Extract LiteLLM model_list entries from the runtime ConfigMap."""
+    if not isinstance(payload, dict):
+        return []
+
+    proxy_config_raw = (
+        payload.get("data", {}).get("proxy_config.yaml")
+        if isinstance(payload.get("data"), dict)
+        else None
+    )
+    if not isinstance(proxy_config_raw, str) or not proxy_config_raw.strip():
+        return []
+
+    try:
+        proxy_config = yaml.safe_load(proxy_config_raw) or {}
+    except Exception:
+        return []
+
+    model_list = proxy_config.get("model_list")
+    if not isinstance(model_list, list):
+        return []
+    return [entry for entry in model_list if isinstance(entry, dict)]
+
+
+def _litellm_model_api_base(entry: Dict[str, Any]) -> str:
+    """Read the configured upstream API base for one LiteLLM model entry."""
+    params = entry.get("litellm_params")
+    if not isinstance(params, dict):
+        return ""
+    return str(params.get("api_base") or params.get("apiBase") or "").strip()
+
+
+def _classify_runtime_model(
+    model_name: str,
+    api_base: str,
+    vllm_model_ids: set[str],
+) -> str:
+    """Classify a LiteLLM model into vLLM, cpu or external buckets."""
+    if model_name in vllm_model_ids:
+        return "vllm"
+
+    normalized_base = _normalize_runtime_base(api_base)
+    sleep_proxy_base = _normalize_runtime_base(settings.sleep_proxy_url)
+    router_base = _normalize_runtime_base(settings.vllm_router_url)
+    litellm_base = _normalize_runtime_base(settings.litellm_url)
+
+    if normalized_base in {sleep_proxy_base, router_base, litellm_base}:
+        return "vllm"
+    if ".svc.cluster.local" in normalized_base:
+        return "cpu"
+    if normalized_base:
+        return "external"
+    return "unknown"
+
+
+async def _probe_runtime_api_base(
+    client: httpx.AsyncClient,
+    api_base: str,
+) -> Tuple[str, Optional[int], Optional[str]]:
+    """Probe one model runtime by trying a small set of common health endpoints."""
+    normalized_base = _normalize_runtime_base(api_base)
+    if not normalized_base:
+        return "unknown", None, "missing api_base"
+
+    probes = [
+        f"{normalized_base}/health",
+        f"{normalized_base}/v1/models",
+        normalized_base,
+    ]
+    last_status_code: Optional[int] = None
+    last_error: Optional[str] = None
+
+    for url in probes:
+        payload, status_code, error = await _fetch_json(client, url)
+        last_status_code = status_code
+        last_error = error
+        ok = bool(status_code is not None and 200 <= status_code < 400)
+        if ok:
+            return "permanent", status_code, None
+        if status_code in {401, 403, 405}:
+            return "permanent", status_code, None
+        if status_code == 404:
+            continue
+        if error:
+            continue
+        if isinstance(payload, dict) and payload:
+            return _component_state_from_status(status_code, ok), status_code, None
+
+    if last_status_code is not None:
+        return _component_state_from_status(last_status_code, False), last_status_code, last_error
+    return "down", None, last_error
+
+
+async def _cpu_models_from_litellm_config(
+    client: httpx.AsyncClient,
+    model_entries: List[Dict[str, Any]],
+    vllm_models: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Build runtime CPU model records from LiteLLM config entries."""
+    vllm_model_ids = {
+        str(model.get("id", "") or "")
+        for model in vllm_models
+        if str(model.get("id", "") or "")
+    }
+
+    cpu_entries: List[Tuple[str, str]] = []
+    for entry in model_entries:
+        model_name = str(entry.get("model_name", "") or "").strip()
+        api_base = _litellm_model_api_base(entry)
+        runtime_kind = _classify_runtime_model(model_name, api_base, vllm_model_ids)
+        if runtime_kind != "cpu" or not model_name:
+            continue
+        cpu_entries.append((model_name, api_base))
+
+    unique_probe_targets = {
+        _normalize_runtime_base(api_base): api_base
+        for _, api_base in cpu_entries
+        if api_base
+    }
+    probe_states: Dict[str, str] = {}
+    for normalized_base, api_base in unique_probe_targets.items():
+        state, _, _ = await _probe_runtime_api_base(client, api_base)
+        probe_states[normalized_base] = state
+
+    models: List[Dict[str, Any]] = []
+    for model_name, api_base in cpu_entries:
+        state = probe_states.get(_normalize_runtime_base(api_base), "unknown")
+        models.append(
+            {
+                "id": model_name,
+                "label": _model_display_name(model_name),
+                "state": state,
+                "engine_ids": [],
+                "engine_states": [state],
+                "node": "cpu",
+                "nodes": ["cpu"],
+                "replicas": 1 if state not in {"down", "unknown"} else 0,
+                "pods": [],
+                "engine_inflight": 0,
+                "runtime": "cpu",
+            }
+        )
+    return models
+
+
+def _cpu_component_from_models(models: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Represent CPU-served models as one diagram box."""
+    if not models:
+        return {
+            "id": "cpu-models",
+            "label": "CPU Modelle",
+            "status": "down",
+            "detail": "no cpu models discovered",
+            "models": [],
+        }
+
+    overall_status = "ok" if all(model.get("state") == "permanent" for model in models) else "error"
+    return {
+        "id": "cpu-models",
+        "label": "CPU Modelle",
+        "status": overall_status,
+        "detail": "",
+        "models": [
+            {
+                "label": str(model.get("label", model.get("id", "-")) or "-"),
+                "status": str(model.get("state", "unknown") or "unknown"),
+            }
+            for model in models
+        ],
     }
 
 
@@ -265,16 +455,21 @@ async def build_snapshot() -> Dict[str, Any]:
                 }
             )
 
-    models = sleep_state.get("models", []) if isinstance(sleep_state, dict) else []
+    vllm_models = sleep_state.get("models", []) if isinstance(sleep_state, dict) else []
     nodes = sleep_state.get("nodes", []) if isinstance(sleep_state, dict) else []
     requests = sleep_state.get("recent_requests", []) if isinstance(sleep_state, dict) else []
     routing = {} if isinstance(sleep_state, dict) else {}
 
     node_memory: List[Dict[str, Any]] = []
+    litellm_configmap_payload: Optional[Dict[str, Any]] = None
     async with httpx.AsyncClient(
         timeout=settings.request_timeout_seconds,
         verify=settings.kubernetes_ca_path,
     ) as kube_client:
+        litellm_configmap_payload, _, _ = await _fetch_kubernetes_json(
+            kube_client,
+            f"/api/v1/namespaces/{settings.kubernetes_namespace}/configmaps/{settings.litellm_configmap_name}",
+        )
         node_list_payload, node_list_status_code, node_list_error = await _fetch_kubernetes_json(
             kube_client,
             "/api/v1/nodes",
@@ -307,19 +502,27 @@ async def build_snapshot() -> Dict[str, Any]:
                     continue
                 node_memory.append(_node_memory_summary(node_name, payload))
 
-    components.append(_engine_component_from_models(models))
+    litellm_model_entries = _litellm_model_entries_from_configmap(litellm_configmap_payload)
+    async with httpx.AsyncClient(timeout=settings.request_timeout_seconds) as client:
+        cpu_models = await _cpu_models_from_litellm_config(client, litellm_model_entries, vllm_models)
+    all_models = [*vllm_models, *cpu_models]
+
+    components.append(_engine_component_from_models(vllm_models))
+    components.append(_cpu_component_from_models(cpu_models))
 
     return {
         "generated_at": int(time.time()),
         "components": components,
-        "models": models,
+        "models": all_models,
+        "vllm_models": vllm_models,
+        "cpu_models": cpu_models,
         "nodes": nodes,
         "node_memory": node_memory,
         "requests": requests,
         "request_paths": _path_counts(requests),
         "request_status": _status_counts(requests),
         "request_series": _request_series(requests),
-        "model_summary": _model_summary(models),
+        "model_summary": _model_summary(vllm_models),
         "routing": {
             "auto_model": routing.get("auto_model", {}),
             "default_model": routing.get("default_model"),

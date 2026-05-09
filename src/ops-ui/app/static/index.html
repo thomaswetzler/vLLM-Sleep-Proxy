@@ -35,7 +35,7 @@
             <div class="diagram-band-head">
               <div>
                 <p class="diagram-group-title">Services and UI</p>
-                <p class="diagram-group-note">Steuerung, Routing und Oberflaechen in einer gemeinsamen Reihe.</p>
+                <p class="diagram-group-note">Steuerung, Routing und Oberflaechen</p>
               </div>
             </div>
             <div class="diagram-row">
@@ -51,13 +51,12 @@
             <div class="diagram-band-head">
               <div>
                 <p class="diagram-group-title">Models and Runtimes</p>
-                <p class="diagram-group-note">Inference-Ziele und spezialisierte Laufzeitdienste in einer zweiten Reihe.</p>
+                <p class="diagram-group-note">Inference-Ziele und spezialisierte Laufzeitdienste</p>
               </div>
             </div>
             <div class="diagram-row">
-              <div data-component="whisper" class="node optional"></div>
+              <div data-component="cpu-models" class="node optional"></div>
               <div data-component="vllm-engines" class="node optional"></div>
-              <div data-component="cpu-embeddings" class="node optional"></div>
             </div>
           </section>
         </div>
@@ -65,8 +64,8 @@
 
       <section class="panel">
         <div class="panel-head">
-          <h2>Operations Summary</h2>
-          <p>Modelzustand, Routing-Anteile und Wake-Fehler in einer gemeinsamen Sicht</p>
+          <h2>Operations Summary for vLLM Models</h2>
+          <p>Modelzustand, Routing-Anteile und Wake-Fehler fuer die vLLM-Modelle</p>
         </div>
         <div class="summary-filter">
           <label>
@@ -87,8 +86,8 @@
 
       <section class="panel">
         <div class="panel-head">
-          <h2>Models</h2>
-          <p>Aktueller Zustand der lokalen Modelle</p>
+          <h2>vLLM Models</h2>
+          <p>Aktueller Zustand der vLLM-Modelle</p>
         </div>
         <div class="table-wrap">
           <table>
@@ -108,8 +107,8 @@
 
       <section class="panel route-panel">
         <div class="panel-head">
-          <h2>Routing and Requests</h2>
-          <p>Node, Modell und Anfragepfad gezielt eingrenzen</p>
+          <h2>Routing and Requests for GPU and CPU Models</h2>
+          <p>Node, Modell und Anfragepfad fuer GPU- und CPU-Modelle gezielt eingrenzen</p>
         </div>
         <div class="route-layout">
           <div class="filters">
@@ -140,7 +139,7 @@
             <article class="panel nested-panel">
               <div class="panel-head">
                 <h2>Recent Routing and Requests</h2>
-                <p>Kombinierte Sicht auf semantische Entscheidungen und tatsaechlich ausgefuehrte Requests</p>
+                <p>Kombinierte Sicht auf semantische Entscheidungen und Requests fuer GPU- und CPU-Modelle</p>
               </div>
               <div class="table-wrap">
                 <table>

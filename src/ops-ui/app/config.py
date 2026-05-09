@@ -29,6 +29,11 @@ class _Settings:
         "http://vllm-router-service.vllm.svc.cluster.local:80",
     ).rstrip("/")
     litellm_url: str = os.getenv("LITELLM_URL", "").rstrip("/")
+    litellm_configmap_name: str = os.getenv(
+        "LITELLM_CONFIGMAP_NAME",
+        "lite-helm-litellm-config",
+    ).strip()
+    kubernetes_namespace: str = os.getenv("KUBERNETES_NAMESPACE", "vllm").strip()
     ops_ui_url: str = os.getenv(
         "OPS_UI_URL",
         "http://ops-ui-service.vllm.svc.cluster.local:8080",

@@ -33,6 +33,10 @@ spec:
               containerPort: {{ .Values.service.targetPort }}
               protocol: TCP
           env:
+            - name: KUBERNETES_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             - name: SLEEP_PROXY_URL
               value: {{ .Values.env.sleepProxyUrl | quote }}
             - name: PROMPT_NORMALIZER_URL
@@ -47,12 +51,16 @@ spec:
               value: {{ .Values.env.vllmRouterUrl | quote }}
             - name: LITELLM_URL
               value: {{ .Values.env.litellmUrl | quote }}
+            - name: LITELLM_CONFIGMAP_NAME
+              value: {{ .Values.env.litellmConfigMapName | quote }}
             - name: OPS_UI_URL
               value: {{ .Values.env.opsUiUrl | quote }}
             - name: PLAYGROUND_URL
               value: {{ .Values.env.playgroundUrl | quote }}
             - name: EMBEDDINGS_URL
               value: {{ .Values.env.embeddingsUrl | quote }}
+            - name: WHISPER_URL
+              value: {{ .Values.env.whisperUrl | quote }}
             - name: REQUEST_TIMEOUT_SECONDS
               value: {{ .Values.env.requestTimeoutSeconds | quote }}
             - name: REFRESH_INTERVAL_SECONDS
