@@ -45,6 +45,11 @@ loader:
       cpu: "2"
       memory: "8Gi"
   models:
+    # CPU Embeddings-Lane. TEI erwartet genau diesen stabilen lokalen Pfad.
+    - id: BAAI/bge-large-en-v1.5
+      enabled: true
+      path: baai-bge-large-en-v1.5
+
     # Kleine Vision-Language-Lane auf der kleineren GPU. Fuer das 8-GiB-Profil
     # nutzen wir eine AWQ-Variante und halten den lokalen Pfad bewusst stabil.
     - id: gaunernst/gemma-3-4b-it-int4-awq

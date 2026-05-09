@@ -46,7 +46,7 @@ IMAGE_TAG        ?= latest
 # PVC check — keep in sync with helm/models/values.yaml loader.models
 PVC_NAME    ?= vllm-model-cache
 CHECK_IMG   ?= alpine:3.19
-MODEL_DIRS  ?= gemma-3-4b-it llama-3.1-8b-instruct \
+MODEL_DIRS  ?= baai-bge-large-en-v1.5 gemma-3-4b-it llama-3.1-8b-instruct \
                qwen2.5-coder-7b-instruct qwen2.5-14b-instruct
 
 .PHONY: help status engines-status models toggle-model test test-embedding test-whisper \

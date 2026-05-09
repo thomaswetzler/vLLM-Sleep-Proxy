@@ -25,6 +25,7 @@ POD_NAME   = "vllm-model-check"
 
 # Keep in sync with helm/models/values.yaml loader.models (enabled entries)
 _DEFAULT_MODEL_DIRS = [
+    "baai-bge-large-en-v1.5",
     "gemma-3-4b-it",
     "llama-3.1-8b-instruct",
     "qwen2.5-coder-7b-instruct",
