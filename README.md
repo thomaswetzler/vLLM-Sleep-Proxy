@@ -66,6 +66,9 @@ Das bedeutet im Detail:
 
 3. `make deploy`
    - deployt zuerst `vllm` aus `helm/stack-core`
+   - wartet danach auf die externen TLS-Zertifikate fuer `litellm`, `ops-ui`
+     und `vllm-playground`
+   - startet fehlgeschlagene cert-manager-Issuance-Laeufe bei Bedarf neu
    - deployt danach `vllm-bootstrap` aus `helm/stack-bootstrap`
    - wartet anschliessend per `kubectl wait` auf den Bootstrap-Job
 

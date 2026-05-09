@@ -27,10 +27,13 @@ TEST_TEMPERATURE ?= 0.7
 TEST_MAX_TOKENS  ?= 220
 HELM_TIMEOUT     ?= 35m
 BOOTSTRAP_WAIT_TIMEOUT ?= 90m
+INGRESS_CERT_WAIT_SECONDS ?= 900
+INGRESS_CERT_MAX_RETRIES ?= 3
 CORE_RELEASE     ?= vllm
 BOOTSTRAP_RELEASE ?= vllm-bootstrap
 BOOTSTRAP_RUN_ID ?= $(shell date +%Y%m%d%H%M%S)
 BOOTSTRAP_JOB_NAME ?= $(BOOTSTRAP_RELEASE)-auto-sleep-$(BOOTSTRAP_RUN_ID)
+INGRESS_CERTS ?= litellm-tls ops-ui-tls vllm-playground-tls
 
 # CPU companion service names (derived from release name + values.yaml)
 EMBEDDINGS_SVC   ?= vllm-baai-bge-large-en-v15-cpu
@@ -219,16 +222,22 @@ deploy-core: deps
 		--set-string litellm.ingress.hosts[0].host="litellm.$(EXTERN_DOMAIN)" \
 		--set-string litellm.ingress.hosts[0].paths[0].path="/" \
 		--set-string litellm.ingress.hosts[0].paths[0].pathType="Prefix" \
+		--set-string litellm.ingress.tls[0].secretName="litellm-tls" \
 		--set-string litellm.ingress.tls[0].hosts[0]="litellm.$(EXTERN_DOMAIN)" \
 		--set-string ops-ui.ingress.hosts[0].host="ops-ui.$(EXTERN_DOMAIN)" \
 		--set-string ops-ui.ingress.hosts[0].paths[0].path="/" \
 		--set-string ops-ui.ingress.hosts[0].paths[0].pathType="Prefix" \
+		--set-string ops-ui.ingress.tls[0].secretName="ops-ui-tls" \
 		--set-string ops-ui.ingress.tls[0].hosts[0]="ops-ui.$(EXTERN_DOMAIN)" \
 		--set-string playground.ingress.hosts[0].host="vllm-playground.$(EXTERN_DOMAIN)" \
 		--set-string playground.ingress.hosts[0].paths[0].path="/" \
 		--set-string playground.ingress.hosts[0].paths[0].pathType="Prefix" \
+		--set-string playground.ingress.tls[0].secretName="vllm-playground-tls" \
 		--set-string playground.ingress.tls[0].hosts[0]="vllm-playground.$(EXTERN_DOMAIN)" \
 		--timeout "$(HELM_TIMEOUT)"
+	@KUBECTL_BIN="$(KUBECTL)" ./scripts/wait_for_ingress_certs.sh \
+		"$(NAMESPACE)" "$(INGRESS_CERT_WAIT_SECONDS)" "$(INGRESS_CERT_MAX_RETRIES)" \
+		$(INGRESS_CERTS)
 
 deploy-bootstrap: deps
 	$(HELM) upgrade --install "$(BOOTSTRAP_RELEASE)" ./helm/stack-bootstrap \
@@ -260,10 +269,16 @@ deploy-litellm:
 	$(HELM) upgrade --install lite-helm ./helm/litellm \
 		-f ./helm/litellm/values.yaml \
 		-n "$(NAMESPACE)" --create-namespace \
-		--set secret.data.masterKey="$$LITELLM_MASTER_KEY" \
-		--set ingress.hosts[0].host="litellm.$(EXTERN_DOMAIN)" \
-		--set ingress.tls[0].hosts[0]="litellm.$(EXTERN_DOMAIN)" \
+		--set-string secret.data.masterKey="$$LITELLM_MASTER_KEY" \
+		--set-string ingress.hosts[0].host="litellm.$(EXTERN_DOMAIN)" \
+		--set-string ingress.hosts[0].paths[0].path="/" \
+		--set-string ingress.hosts[0].paths[0].pathType="Prefix" \
+		--set-string ingress.tls[0].secretName="litellm-tls" \
+		--set-string ingress.tls[0].hosts[0]="litellm.$(EXTERN_DOMAIN)" \
 		--timeout "$(HELM_TIMEOUT)"
+	@KUBECTL_BIN="$(KUBECTL)" ./scripts/wait_for_ingress_certs.sh \
+		"$(NAMESPACE)" "$(INGRESS_CERT_WAIT_SECONDS)" "$(INGRESS_CERT_MAX_RETRIES)" \
+		litellm-tls
 
 deploy-ops-ui:
 	@test -n "$(EXTERN_DOMAIN)" || { \
@@ -271,9 +286,15 @@ deploy-ops-ui:
 	$(HELM) upgrade --install ops-ui ./helm/ops-ui \
 		-f ./helm/ops-ui/values.yaml \
 		-n "$(NAMESPACE)" --create-namespace \
-		--set ingress.hosts[0].host="ops-ui.$(EXTERN_DOMAIN)" \
-		--set ingress.tls[0].hosts[0]="ops-ui.$(EXTERN_DOMAIN)" \
+		--set-string ingress.hosts[0].host="ops-ui.$(EXTERN_DOMAIN)" \
+		--set-string ingress.hosts[0].paths[0].path="/" \
+		--set-string ingress.hosts[0].paths[0].pathType="Prefix" \
+		--set-string ingress.tls[0].secretName="ops-ui-tls" \
+		--set-string ingress.tls[0].hosts[0]="ops-ui.$(EXTERN_DOMAIN)" \
 		--timeout "$(HELM_TIMEOUT)"
+	@KUBECTL_BIN="$(KUBECTL)" ./scripts/wait_for_ingress_certs.sh \
+		"$(NAMESPACE)" "$(INGRESS_CERT_WAIT_SECONDS)" "$(INGRESS_CERT_MAX_RETRIES)" \
+		ops-ui-tls
 
 deploy-playground:
 	@test -n "$(EXTERN_DOMAIN)" || { \
@@ -281,9 +302,15 @@ deploy-playground:
 	$(HELM) upgrade --install playground ./helm/playground \
 		-f ./helm/playground/values.yaml \
 		-n "$(NAMESPACE)" --create-namespace \
-		--set ingress.hosts[0].host="vllm-playground.$(EXTERN_DOMAIN)" \
-		--set ingress.tls[0].hosts[0]="vllm-playground.$(EXTERN_DOMAIN)" \
+		--set-string ingress.hosts[0].host="vllm-playground.$(EXTERN_DOMAIN)" \
+		--set-string ingress.hosts[0].paths[0].path="/" \
+		--set-string ingress.hosts[0].paths[0].pathType="Prefix" \
+		--set-string ingress.tls[0].secretName="vllm-playground-tls" \
+		--set-string ingress.tls[0].hosts[0]="vllm-playground.$(EXTERN_DOMAIN)" \
 		--timeout "$(HELM_TIMEOUT)"
+	@KUBECTL_BIN="$(KUBECTL)" ./scripts/wait_for_ingress_certs.sh \
+		"$(NAMESPACE)" "$(INGRESS_CERT_WAIT_SECONDS)" "$(INGRESS_CERT_MAX_RETRIES)" \
+		vllm-playground-tls
 
 # ── Undeploy ──────────────────────────────────────────────────────────────────
 
