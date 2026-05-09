@@ -182,11 +182,11 @@ vllm-stack:
         extraVolumeMounts: *extraVolumeMounts
 
       # -----------------------------------------------------------------------
-      # lab02 – Kleine Vision-Language-Lane: Gemma 3 4B IT
-      # Auf der 8-GiB-GPU bleibt das Profil bewusst konservativ: nur ein Bild
-      # pro Prompt, eine aktive Sequenz und reduzierte GPU-Auslastung.
-      # Fuer PDF-Formulare muessen Seiten clientseitig als Bilder gerendert
-      # werden; die Lane selbst bleibt OpenAI-/vLLM-kompatibel.
+      # lab02 – Kleiner Allrounder: Gemma 3 4B IT
+      # Im PVC liegt die AWQ-Variante. Das 8-GiB-Profil bleibt konservativ:
+      # kurzer Kontext, eager mode und reduzierte GPU-Auslastung.
+      # Auch hier bleibt Multimodalitaet vorerst deaktiviert, damit der
+      # Text-only-Betrieb auf der 8-GiB-GPU sauber startet.
       # -----------------------------------------------------------------------
       - name: "gemma3-4b-it-lab02-gpu"
         repository: "lmcache/vllm-openai"
@@ -206,19 +206,19 @@ vllm-stack:
 
         vllmConfig:
           <<: *vllmBase
-          # Vision auf 8 GiB ist eng. Daher nur eine Sequenz gleichzeitig und
-          # weniger aggressives VRAM-Target als im bisherigen Text-only-Profil.
+          # Auch die kleine Gemma-Lane sollte im offiziell unterstützten Modus
+          # laufen; text-only bleibt davon unberührt.
           enableChunkedPrefill: true
           maxModelLen: 2048
-          maxNumSeqs: 1
+          maxNumSeqs: 8
           dtype: "auto"
           extraArgs:
             - "--gpu-memory-utilization"
-            - "0.60"
+            - "0.70"
             - "--disable-log-requests"
             - "--enable-sleep-mode"
             - "--limit-mm-per-prompt"
-            - '{"image":1}'
+            - '{"image":0}'
             - "--served-model-name"
             - "local/gemma-3-4b-it"
             - "--enforce-eager"

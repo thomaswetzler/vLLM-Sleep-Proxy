@@ -29,7 +29,7 @@ Die Modelle landen unter:
 | Modell | Pfad | Use Case | Node |
 |--------|------|----------|------|
 | BAAI/bge-large-en-v1.5 | `/data/models/baai-bge-large-en-v1.5` | Embeddings EN (CPU) | CPU |
-| gaunernst/gemma-3-4b-it-int4-awq | `/data/models/gemma-3-4b-it` | Kleine Vision-Language-Lane | lab02 |
+| gaunernst/gemma-3-4b-it-int4-awq | `/data/models/gemma-3-4b-it` | Kleiner Allrounder | lab02 |
 | hugging-quants/Meta-Llama-3.1-8B-Instruct-AWQ-INT4 | `/data/models/llama-3.1-8b-instruct` | Default-Lane | lab01 |
 | Qwen/Qwen2.5-Coder-7B-Instruct-AWQ | `/data/models/qwen2.5-coder-7b-instruct` | Coding-Lane | lab02 |
 | Qwen/Qwen2.5-14B-Instruct-AWQ | `/data/models/qwen2.5-14b-instruct` | Qualitaetsmodus | lab01 |
