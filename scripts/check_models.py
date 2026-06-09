@@ -31,6 +31,8 @@ _DEFAULT_MODEL_DIRS = [
     "llama-3.1-8b-instruct",
     "qwen2.5-coder-7b-instruct",
     "qwen2.5-14b-instruct",
+    "qwen2.5-vl-7b-instruct",
+    "chandra-ocr-2",
 ]
 MODEL_DIRS = os.environ.get("MODEL_DIRS", "").split() or _DEFAULT_MODEL_DIRS
 

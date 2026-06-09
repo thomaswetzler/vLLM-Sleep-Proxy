@@ -88,6 +88,32 @@ loader:
       path: qwen2.5-72b-instruct
       allowPatterns:
         - Qwen2.5-72B-Instruct-Q4_K_M.gguf
+
+    # Standard-VL-Lane fuer llama.cpp. Wir cachen bewusst nur die benoetigte
+    # GGUF-Datei plus mmproj, damit der Download reproduzierbar und begrenzt
+    # bleibt.
+    - id: bartowski/Qwen_Qwen2.5-VL-7B-Instruct-GGUF
+      enabled: true
+      path: qwen2.5-vl-7b-instruct
+      allowPatterns:
+        - Qwen_Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf
+        - mmproj-Qwen_Qwen2.5-VL-7B-Instruct-f16.gguf
+
+    # Chandra 2 wird zunaechst als gecachte Spezial-Lane vorbereitet. Damit
+    # kann die Runtime-Integration spaeter ohne erneuten Basisdownload
+    # erfolgen.
+    - id: datalab-to/chandra-ocr-2
+      enabled: true
+      path: chandra-ocr-2
+      allowPatterns:
+        - "*.json"
+        - "*.safetensors"
+        - "*.jinja"
+
+  # Optional additive overlay for extra cache-only models. This keeps the
+  # default model set extensible while still allowing targeted future
+  # downloads via an extra values overlay.
+  extraModels: []
   templates:
     - enabled: true
       name: tool_chat_template_llama3.1_json.jinja

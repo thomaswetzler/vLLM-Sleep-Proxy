@@ -43,6 +43,7 @@ STACK_CORE_EXTRA_VALUES ?=
 STACK_CORE_EXTRA_HELM_ARGS ?=
 MODEL_LOADER_EXTRA_VALUES ?=
 MODEL_LOADER_EXTRA_HELM_ARGS ?=
+MODEL_LOADER_RELEASE ?= vllm-models
 MODEL_DIRS_EXTRA ?=
 
 # CPU companion service names (derived from release name + values.yaml)
@@ -68,7 +69,8 @@ LLAMA_CPP_ENGINE_IMAGE_NAME ?= llama-cpp-engine
 PVC_NAME    ?= vllm-model-cache
 CHECK_IMG   ?= alpine:3.19
 MODEL_DIRS  ?= baai-bge-large-en-v1.5 gemma-3-4b-it llama-3.1-8b-instruct \
-               qwen2.5-coder-7b-instruct qwen2.5-14b-instruct
+               qwen2.5-coder-7b-instruct qwen2.5-14b-instruct \
+               qwen2.5-vl-7b-instruct chandra-ocr-2
 
 .PHONY: help status engines-status models toggle-model test test-portforward test-protforward test-litellm test-embedding test-embedding-litellm test-whisper test-whisper-litellm \
         deps model-download check-models \
@@ -324,10 +326,17 @@ model-download:
 # ── PVC health check ──────────────────────────────────────────────────────────
 
 check-models:
-	@NAMESPACE="$(NAMESPACE)" KUBECTL="$(KUBECTL)" \
-	 PVC_NAME="$(PVC_NAME)" CHECK_IMG="$(CHECK_IMG)" \
-	 MODEL_DIRS="$(MODEL_DIRS) $(MODEL_DIRS_EXTRA)" \
-	 $(PYTHON) ./scripts/check_models.py
+	@model_dirs="$(MODEL_DIRS)"; \
+	if $(HELM) status "$(MODEL_LOADER_RELEASE)" -n "$(NAMESPACE)" >/dev/null 2>&1; then \
+		release_dirs="$$($(HELM) get values "$(MODEL_LOADER_RELEASE)" -n "$(NAMESPACE)" -o json | $(JQ) -r '[ (.loader.models // [])[], (.loader.extraModels // [])[] ] | map(select(.enabled != false) | .path) | .[]' | tr '\n' ' ')"; \
+		if [ -n "$$release_dirs" ]; then \
+			model_dirs="$$release_dirs"; \
+		fi; \
+	fi; \
+	NAMESPACE="$(NAMESPACE)" KUBECTL="$(KUBECTL)" \
+	PVC_NAME="$(PVC_NAME)" CHECK_IMG="$(CHECK_IMG)" \
+	MODEL_DIRS="$$model_dirs $(MODEL_DIRS_EXTRA)" \
+	$(PYTHON) ./scripts/check_models.py
 
 # ── Deploy ────────────────────────────────────────────────────────────────────
 

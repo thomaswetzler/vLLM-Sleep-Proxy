@@ -35,7 +35,7 @@ spec:
             - name: TEMPLATE_ROOT
               value: {{ .Values.loader.templateRoot | quote }}
             - name: MODELS_JSON
-              value: {{ toJson .Values.loader.models | quote }}
+              value: {{ concat .Values.loader.models (default (list) .Values.loader.extraModels) | toJson | quote }}
             - name: TEMPLATES_JSON
               value: {{ toJson .Values.loader.templates | quote }}
             - name: HF_HUB_ENABLE_HF_TRANSFER

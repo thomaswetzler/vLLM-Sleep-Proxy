@@ -4,7 +4,8 @@ litellm:
 
 llama-cpp-engine:
   # The hybrid runtime path stays opt-in until a GGUF model file and image are
-  # prepared for the target node. See values.llama-cpp-example.yaml.
+  # prepared for the target node. See values.llama-cpp-example.yaml for a text
+  # model lane and values.llama-cpp-vl-example.yaml for a vision lane.
   engines: []
 
 playground:

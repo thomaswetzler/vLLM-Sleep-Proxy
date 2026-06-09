@@ -1,0 +1,53 @@
+# Example overlay for one hybrid llama.cpp vision lane on lab01.
+#
+# Usage:
+#   helm upgrade --install vllm ./helm/stack-core \
+#     -f ./helm/stack-core/values.yaml \
+#     -f ./helm/stack-core/values.llama-cpp-vl-example.yaml
+#
+# Model cache prerequisite:
+#   make model-download
+
+sleep-proxy:
+  env:
+    engineCatalog:
+      - model: local/qwen2.5-vl-7b-instruct
+        runtime: llama_cpp
+        endpoint: http://llama-qwen25-vl-7b-instruct-lab01-service.vllm.svc.cluster.local:8080
+        nodeName: lab01
+        engineKey: llama_cpp:lab01:local/qwen2.5-vl-7b-instruct
+
+llama-cpp-engine:
+  engines:
+    - name: qwen25-vl-7b-instruct-lab01
+      alias: local/qwen2.5-vl-7b-instruct
+      nodeName: lab01
+      modelFile: /data/models/qwen2.5-vl-7b-instruct/Qwen_Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf
+      resources:
+        requests:
+          cpu: "1"
+          memory: "16Gi"
+          nvidia.com/gpu: "1"
+        limits:
+          cpu: "8"
+          memory: "24Gi"
+          nvidia.com/gpu: "1"
+      llama:
+        ctxSize: 8192
+        nGpuLayers: 999
+        nParallel: 1
+        threads: 8
+        flashAttention: true
+        jinja: true
+        endpointMetrics: true
+        mmproj: /data/models/qwen2.5-vl-7b-instruct/mmproj-Qwen_Qwen2.5-VL-7B-Instruct-f16.gguf
+
+litellm:
+  extraModelList:
+    - model_name: local/qwen2.5-vl-7b-instruct
+      litellm_params:
+        model: openai/local/qwen2.5-vl-7b-instruct
+        api_base: http://sleep-proxy-service.vllm.svc.cluster.local:8080/v1
+        api_key: not-used
+      model_info:
+        lane: vision-llama-cpp
