@@ -21,10 +21,14 @@ LLM_ROUTER_URL   ?= http://llm-router.$(EXTERN_DOMAIN)
 LLM_GATEWAY_URL  ?= https://litellm.$(EXTERN_DOMAIN)
 MODELS_URL       ?= $(LLM_GATEWAY_URL)/v1/models?include=node
 COMPLETIONS_URL  ?= $(LLM_GATEWAY_URL)/v1/chat/completions
+EMBEDDINGS_URL   ?= $(LLM_GATEWAY_URL)/v1/embeddings
+TRANSCRIPTIONS_URL ?= $(LLM_GATEWAY_URL)/v1/audio/transcriptions
 SLEEP_LEVEL      ?= 1
 TEST_PROMPT      ?= Was ist 4 + 3?
+TEST_EMBEDDING_INPUT ?= Hello world
 TEST_TEMPERATURE ?= 0.7
 TEST_MAX_TOKENS  ?= 220
+GPU_TEST_LOCAL_PORT ?= 18000
 HELM_TIMEOUT     ?= 35m
 BOOTSTRAP_WAIT_TIMEOUT ?= 90m
 INGRESS_CERT_WAIT_SECONDS ?= 900
@@ -40,6 +44,8 @@ EMBEDDINGS_SVC   ?= vllm-baai-bge-large-en-v15-cpu
 WHISPER_SVC      ?= vllm-whisper-cpu-service
 # Sample audio file used by make test-whisper (override with TEST_AUDIO=/path/to/file.mp3)
 TEST_AUDIO       ?= scripts/test-audio.mp3
+EMBEDDING_MODEL  ?= BAAI/bge-large-en-v1.5
+WHISPER_MODEL    ?= whisper-large-v3
 
 CURL    ?= curl
 JQ      ?= jq
@@ -57,7 +63,7 @@ CHECK_IMG   ?= alpine:3.19
 MODEL_DIRS  ?= baai-bge-large-en-v1.5 gemma-3-4b-it llama-3.1-8b-instruct \
                qwen2.5-coder-7b-instruct qwen2.5-14b-instruct
 
-.PHONY: help status engines-status models toggle-model test test-embedding test-whisper \
+.PHONY: help status engines-status models toggle-model test test-portforward test-protforward test-litellm test-embedding test-embedding-litellm test-whisper test-whisper-litellm \
         deps model-download check-models \
         deploy deploy-core deploy-bootstrap deploy-vllm deploy-sleep-proxy deploy-litellm deploy-ops-ui deploy-playground \
         undeploy undeploy-core undeploy-bootstrap undeploy-vllm undeploy-sleep-proxy undeploy-litellm undeploy-ops-ui undeploy-playground \
@@ -83,9 +89,13 @@ help:
 		'  make engines-status     Show sleep status of all engines via router API' \
 		'  make models             List models from gateway incl. node and sleep state' \
 		'  make toggle-model       Interactive: choose a model and flip its sleep state' \
-		'  make test               Interactive: choose a model and run a completion test' \
+		'  make test-portforward   Interactive: choose a model and test it via direct kubectl port-forward' \
+		'  make test-protforward   Alias for make test-portforward' \
+		'  make test-litellm      Interactive: choose a model and run the matching LiteLLM ingress test' \
 		'  make test-embedding     Test TEI embedding service via kubectl port-forward' \
+		'  make test-embedding-litellm Test embeddings via LiteLLM ingress' \
 		'  make test-whisper       Test Whisper transcription service via kubectl port-forward' \
+		'  make test-whisper-litellm Test Whisper transcription via LiteLLM ingress' \
 		'  make deps               Update Helm chart dependencies' \
 		'  make build              Build sleep-proxy Docker image' \
 		'  make push               Push sleep-proxy Docker image to registry' \
@@ -118,7 +128,15 @@ toggle-model:
 		--kubectl "$(KUBECTL)"
 
 test:
+	@printf 'make test is deprecated; use make test-portforward\n' >&2
+	@$(MAKE) --no-print-directory test-portforward
+
+test-protforward: test-portforward
+
+test-portforward:
 	@set -eu; \
+	test -n "$$LITELLM_MASTER_KEY" || { \
+		printf 'LITELLM_MASTER_KEY is not set. Set it in .env:\n  LITELLM_MASTER_KEY=sk-...\n' >&2; exit 1; }; \
 	response_file=$$(mktemp); models_file=$$(mktemp); completion_file=$$(mktemp); \
 	trap 'rm -f "$$response_file" "$$models_file" "$$completion_file"' EXIT HUP INT TERM; \
 	$(CURL) -fsS -H "Authorization: Bearer $$LITELLM_MASTER_KEY" "$(MODELS_URL)" > "$$response_file"; \
@@ -130,17 +148,99 @@ test:
 	printf 'Select model number: '; read -r sel; \
 	model=$$(sed -n "$${sel}p" "$$models_file"); \
 	[ -n "$$model" ] || { printf 'Invalid selection.\n' >&2; exit 1; }; \
-	printf 'Testing: %s\n' "$$model"; \
-	payload=$$($(JQ) -nc \
-		--arg model "$$model" \
-		--arg prompt "$(TEST_PROMPT)" \
-		--argjson temperature "$(TEST_TEMPERATURE)" \
-		--argjson max_tokens "$(TEST_MAX_TOKENS)" \
-		'{model:$$model,messages:[{role:"user",content:$$prompt}],temperature:$$temperature,max_tokens:$$max_tokens}'); \
-	http_code=$$($(CURL) -sS -o "$$completion_file" -w '%{http_code}' "$(COMPLETIONS_URL)" \
-		-H 'Content-Type: application/json' -H "Authorization: Bearer $$LITELLM_MASTER_KEY" -d "$$payload"); \
-	case "$$http_code" in 2??) $(JQ) < "$$completion_file" ;; \
-		*) printf 'HTTP %s\n' "$$http_code" >&2; $(JQ) < "$$completion_file" >&2; exit 1 ;; esac
+	printf 'Testing via direct port-forward: %s\n' "$$model"; \
+	case "$$model" in \
+		"$(EMBEDDING_MODEL)") \
+			$(MAKE) --no-print-directory test-embedding TEST_EMBEDDING_INPUT="$(TEST_EMBEDDING_INPUT)" ;; \
+		"$(WHISPER_MODEL)") \
+			$(MAKE) --no-print-directory test-whisper TEST_AUDIO="$(TEST_AUDIO)" ;; \
+		*) \
+			pod_name=$$(KUBECONFIG="$(KUBECONFIG)" $(PYTHON) ./scripts/models_status.py \
+				--namespace "$(NAMESPACE)" \
+				--kubectl "$(KUBECTL)" \
+				--pod-for-model "$$model"); \
+			[ -n "$$pod_name" ] || { printf 'No pod found for model: %s\n' "$$model" >&2; exit 1; }; \
+			printf 'Port-forwarding pod/%s:8000 -> localhost:%s ...\n' "$$pod_name" "$(GPU_TEST_LOCAL_PORT)"; \
+			$(KUBECTL) -n "$(NAMESPACE)" port-forward "pod/$$pod_name" "$(GPU_TEST_LOCAL_PORT):8000" >/dev/null 2>&1 & \
+			pf_pid=$$!; \
+			trap 'kill $$pf_pid 2>/dev/null || true; rm -f "$$response_file" "$$models_file" "$$completion_file"' EXIT HUP INT TERM; \
+			for i in 1 2 3 4 5; do \
+				sleep 1; \
+				$(CURL) -sf --max-time 2 "http://localhost:$(GPU_TEST_LOCAL_PORT)/health" >/dev/null 2>&1 && break; \
+				printf 'Waiting for GPU model port-forward... (%s/5)\n' "$$i"; \
+			done; \
+			payload=$$($(JQ) -nc \
+				--arg model "$$model" \
+				--arg prompt "$(TEST_PROMPT)" \
+				--argjson temperature "$(TEST_TEMPERATURE)" \
+				--argjson max_tokens "$(TEST_MAX_TOKENS)" \
+				'{model:$$model,messages:[{role:"user",content:$$prompt}],temperature:$$temperature,max_tokens:$$max_tokens}'); \
+			http_code=$$($(CURL) -sS -o "$$completion_file" -w '%{http_code}' "http://localhost:$(GPU_TEST_LOCAL_PORT)/v1/chat/completions" \
+				-H 'Content-Type: application/json' -d "$$payload"); \
+			case "$$http_code" in 2??) $(JQ) < "$$completion_file" ;; \
+				*) printf 'HTTP %s\n' "$$http_code" >&2; $(JQ) < "$$completion_file" >&2; exit 1 ;; esac ;; \
+	esac
+
+test-litellm:
+	@set -eu; \
+	test -n "$$LITELLM_MASTER_KEY" || { \
+		printf 'LITELLM_MASTER_KEY is not set. Set it in .env:\n  LITELLM_MASTER_KEY=sk-...\n' >&2; exit 1; }; \
+	response_file=$$(mktemp); models_file=$$(mktemp); completion_file=$$(mktemp); \
+	trap 'rm -f "$$response_file" "$$models_file" "$$completion_file"' EXIT HUP INT TERM; \
+	$(CURL) -fsS -H "Authorization: Bearer $$LITELLM_MASTER_KEY" "$(MODELS_URL)" > "$$response_file"; \
+	$(JQ) -r '.data[].id' "$$response_file" 2>/dev/null > "$$models_file" || \
+		$(JQ) -r '.[]' "$$response_file" > "$$models_file"; \
+	count=$$(wc -l < "$$models_file" | tr -d '[:space:]'); \
+	[ "$$count" -gt 0 ] || { printf 'No models found.\n' >&2; exit 1; }; \
+	printf 'Available models:\n'; nl -w1 -s') ' "$$models_file"; \
+	printf 'Select model number: '; read -r sel; \
+	model=$$(sed -n "$${sel}p" "$$models_file"); \
+	[ -n "$$model" ] || { printf 'Invalid selection.\n' >&2; exit 1; }; \
+	printf 'Testing via LiteLLM ingress: %s\n' "$$model"; \
+	case "$$model" in \
+		"$(EMBEDDING_MODEL)") \
+			payload=$$($(JQ) -nc --arg input "$(TEST_EMBEDDING_INPUT)" --arg model "$$model" \
+				'{input:$$input,model:$$model}'); \
+			http_code=$$($(CURL) -sS -o "$$completion_file" -w '%{http_code}' "$(EMBEDDINGS_URL)" \
+				-H 'Content-Type: application/json' -H "Authorization: Bearer $$LITELLM_MASTER_KEY" -d "$$payload"); \
+			case "$$http_code" in 2??) \
+				result=$$($(JQ) '.data[0].embedding | length' < "$$completion_file"); \
+				printf 'Embedding dimension via LiteLLM: %s (expected: 1024)\n' "$$result" ;; \
+				*) printf 'HTTP %s\n' "$$http_code" >&2; $(JQ) < "$$completion_file" >&2; exit 1 ;; esac ;; \
+		"$(WHISPER_MODEL)") \
+			test -f "$(TEST_AUDIO)" || { \
+				printf 'Audio file not found: %s\nOverride with: make test-litellm TEST_AUDIO=/path/to/file.mp3\n' \
+				"$(TEST_AUDIO)" >&2; exit 1; }; \
+			http_code=$$($(CURL) -sS --max-time 120 -o "$$completion_file" -w '%{http_code}' "$(TRANSCRIPTIONS_URL)" \
+				-H "Authorization: Bearer $$LITELLM_MASTER_KEY" \
+				-F "file=@$(TEST_AUDIO)" \
+				-F "model=$$model"); \
+			case "$$http_code" in 2??) $(JQ) '.text' < "$$completion_file" ;; \
+				*) printf 'HTTP %s\n' "$$http_code" >&2; $(JQ) < "$$completion_file" >&2; exit 1 ;; esac ;; \
+		*) \
+			payload=$$($(JQ) -nc \
+				--arg model "$$model" \
+				--arg prompt "$(TEST_PROMPT)" \
+				--argjson temperature "$(TEST_TEMPERATURE)" \
+				--argjson max_tokens "$(TEST_MAX_TOKENS)" \
+				'{model:$$model,messages:[{role:"user",content:$$prompt}],temperature:$$temperature,max_tokens:$$max_tokens}'); \
+			http_code=$$($(CURL) -sS -o "$$completion_file" -w '%{http_code}' "$(COMPLETIONS_URL)" \
+				-H 'Content-Type: application/json' -H "Authorization: Bearer $$LITELLM_MASTER_KEY" -d "$$payload"); \
+			case "$$http_code" in 2??) $(JQ) < "$$completion_file" ;; \
+				*) printf 'HTTP %s\n' "$$http_code" >&2; $(JQ) < "$$completion_file" >&2; exit 1 ;; esac ;; \
+	esac
+
+test-embedding-litellm:
+	@set -eu; \
+	test -n "$$LITELLM_MASTER_KEY" || { \
+		printf 'LITELLM_MASTER_KEY is not set. Set it in .env:\n  LITELLM_MASTER_KEY=sk-...\n' >&2; exit 1; }; \
+	printf 'Sending embedding request via LiteLLM ingress ...\n'; \
+	result=$$($(CURL) -sS "$(EMBEDDINGS_URL)" \
+		-H "Content-Type: application/json" \
+		-H "Authorization: Bearer $$LITELLM_MASTER_KEY" \
+		-d '{"input": "$(TEST_EMBEDDING_INPUT)", "model": "$(EMBEDDING_MODEL)"}' \
+		| $(JQ) '.data[0].embedding | length'); \
+	printf 'Embedding dimension via LiteLLM: %s (expected: 1024)\n' "$$result"
 
 test-embedding:
 	@printf 'Port-forwarding %s:3000 → localhost:13000 ...\n' "$(EMBEDDINGS_SVC)"; \
@@ -151,7 +251,7 @@ test-embedding:
 	printf 'Sending embedding request ...\n'; \
 	result=$$($(CURL) -sS http://localhost:13000/embeddings \
 		-H "Content-Type: application/json" \
-		-d '{"input": "Hello world", "model": "baai-bge-large-en-v1.5"}' \
+		-d '{"input": "$(TEST_EMBEDDING_INPUT)", "model": "baai-bge-large-en-v1.5"}' \
 		| $(JQ) '.data[0].embedding | length'); \
 	printf 'Embedding dimension: %s (expected: 1024)\n' "$$result"
 
@@ -173,6 +273,20 @@ test-whisper:
 	$(CURL) -sS --max-time 120 http://localhost:18080/v1/audio/transcriptions \
 		-F "file=@$(TEST_AUDIO)" \
 		-F "model=Systran/faster-whisper-large-v3" \
+		| $(JQ) '.text'
+
+test-whisper-litellm:
+	@set -eu; \
+	test -n "$$LITELLM_MASTER_KEY" || { \
+		printf 'LITELLM_MASTER_KEY is not set. Set it in .env:\n  LITELLM_MASTER_KEY=sk-...\n' >&2; exit 1; }; \
+	test -f "$(TEST_AUDIO)" || { \
+		printf 'Audio file not found: %s\nOverride with: make test-whisper-litellm TEST_AUDIO=/path/to/file.mp3\n' \
+		"$(TEST_AUDIO)" >&2; exit 1; }; \
+	printf 'Sending transcription request via LiteLLM ingress (%s) ...\n' "$(TEST_AUDIO)"; \
+	$(CURL) -sS --max-time 120 "$(TRANSCRIPTIONS_URL)" \
+		-H "Authorization: Bearer $$LITELLM_MASTER_KEY" \
+		-F "file=@$(TEST_AUDIO)" \
+		-F "model=$(WHISPER_MODEL)" \
 		| $(JQ) '.text'
 
 # ── Helm dependencies ─────────────────────────────────────────────────────────

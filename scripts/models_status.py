@@ -362,6 +362,26 @@ def choose_entry(entries: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     return entries[index - 1]
 
 
+def resolve_model_pod_name(kubectl: str, namespace: str, model_id: str) -> Optional[str]:
+    """Return the first ready pod name serving the given model alias/path."""
+    locations = fetch_pod_locations(kubectl, namespace)
+    location = locations.get(model_id)
+    if not isinstance(location, dict):
+        return None
+
+    pods = location.get("pods")
+    if not isinstance(pods, list):
+        return None
+
+    for pod in pods:
+        if not isinstance(pod, dict):
+            continue
+        pod_name = pod.get("name")
+        if isinstance(pod_name, str) and pod_name:
+            return pod_name
+    return None
+
+
 def toggle_model(entry: Dict[str, Any], router_url: str, sleep_level: int) -> None:
     """Switch all engines of one model between sleep and awake."""
     model_id = str(entry["model"])
@@ -407,13 +427,26 @@ def toggle_model(entry: Dict[str, Any], router_url: str, sleep_level: int) -> No
 def main() -> int:
     """CLI entrypoint used by `make models` and `make toggle-model`."""
     parser = argparse.ArgumentParser()
-    parser.add_argument("--models-url", required=True)
-    parser.add_argument("--router-url", required=True)
+    parser.add_argument("--models-url")
+    parser.add_argument("--router-url")
     parser.add_argument("--namespace", default="")
     parser.add_argument("--kubectl", default="kubectl")
     parser.add_argument("--toggle", action="store_true")
     parser.add_argument("--sleep-level", type=int, default=1)
+    parser.add_argument("--pod-for-model", default="")
     args = parser.parse_args()
+
+    if args.pod_for_model:
+        if not args.namespace:
+            return fail("--namespace wird fuer --pod-for-model benoetigt.")
+        pod_name = resolve_model_pod_name(args.kubectl, args.namespace, args.pod_for_model)
+        if not pod_name:
+            return fail(f"Kein bereiter Pod fuer Modell '{args.pod_for_model}' gefunden.")
+        print(pod_name)
+        return 0
+
+    if not args.models_url or not args.router_url:
+        parser.error("--models-url und --router-url sind erforderlich, ausser bei --pod-for-model")
 
     router_url = args.router_url.rstrip("/")
 
