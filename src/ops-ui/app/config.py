@@ -41,11 +41,11 @@ class _Settings:
     playground_url: str = os.getenv("PLAYGROUND_URL", "").rstrip("/")
     embeddings_url: str = os.getenv(
         "EMBEDDINGS_URL",
-        "http://vllm-baai-bge-large-en-v15-cpu.vllm.svc.cluster.local:3000",
+        "http://cpu-baai-bge-large-en-v15.vllm.svc.cluster.local:3000",
     ).rstrip("/")
     whisper_url: str = os.getenv(
         "WHISPER_URL",
-        "http://vllm-whisper-cpu-service.vllm.svc.cluster.local",
+        "http://cpu-whisper-service.vllm.svc.cluster.local",
     ).rstrip("/")
     request_timeout_seconds: float = float(os.getenv("REQUEST_TIMEOUT_SECONDS", "10"))
     refresh_interval_seconds: float = float(os.getenv("REFRESH_INTERVAL_SECONDS", "5"))

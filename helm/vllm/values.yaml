@@ -319,7 +319,7 @@ vllm-stack:
 # ---------------------------------------------------------------------------
 embeddings:
   enabled: true
-  name: baai-bge-large-en-v15-cpu
+  name: baai-bge-large-en-v15
   image:
     repository: ghcr.io/huggingface/text-embeddings-inference
     tag: "cpu-1.9.1"
@@ -373,7 +373,7 @@ embeddings:
 # ---------------------------------------------------------------------------
 whisper:
   enabled: true
-  name: whisper-cpu
+  name: whisper
   image:
     repository: fedirz/faster-whisper-server
     tag: "latest-cpu"

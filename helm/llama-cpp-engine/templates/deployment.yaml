@@ -10,6 +10,8 @@ metadata:
     llama-cpp-engine/name: {{ $engine.name }}
 spec:
   replicas: 1
+  strategy:
+    type: {{ default $.Values.updateStrategy $engine.updateStrategy | quote }}
   selector:
     matchLabels:
       {{- include "llama-cpp-engine.selectorLabels" (dict "root" $ "engine" $engine) | nindent 6 }}

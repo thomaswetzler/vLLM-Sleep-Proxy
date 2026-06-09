@@ -96,6 +96,8 @@ spec:
                   model_id = model['id']
                   rel_path = model.get('path') or model_id.replace('/', '--')
                   revision = model.get('revision')
+                  allow_patterns = model.get('allowPatterns')
+                  ignore_patterns = model.get('ignorePatterns')
                   local_dir = os.path.join(model_root, rel_path)
                   os.makedirs(local_dir, exist_ok=True)
                   print(f'Downloading {model_id} -> {local_dir}', flush=True)
@@ -109,6 +111,10 @@ spec:
                       kwargs['token'] = token
                   if revision:
                       kwargs['revision'] = revision
+                  if allow_patterns:
+                      kwargs['allow_patterns'] = allow_patterns
+                  if ignore_patterns:
+                      kwargs['ignore_patterns'] = ignore_patterns
                   snapshot_download(**kwargs)
                   print(f'Done: {model_id}', flush=True)
                   return model_id

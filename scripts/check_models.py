@@ -2,8 +2,9 @@
 """check_models.py — verify model files on the shared vllm-model-cache PVC.
 
 Spins up a short-lived Alpine pod, mounts the PVC, and checks each model
-directory for: existence, config.json, at least one .safetensors weight file,
-and absence of incomplete-download artefacts (.part / .tmp).
+directory for: existence, either a GGUF file or the usual config.json plus
+.safetensors weights, and absence of incomplete-download artefacts
+(.part / .tmp).
 
 Usage:
     python3 scripts/check_models.py          # uses env / defaults
@@ -60,9 +61,10 @@ def _build_script():
         parts.append(
             f'p=/data/models/{d}; '
             f'if   [ ! -d "$p" ];                          then s=MISSING; '
+            f'elif ls "$p"/*.part "$p"/*.tmp >/dev/null 2>&1; then s=INCOMPLETE; '
+            f'elif ls "$p"/*.gguf >/dev/null 2>&1;         then s=OK; '
             f'elif [ ! -f "$p/config.json" ];              then s=NO_CONFIG; '
             f'elif ! ls "$p"/*.safetensors >/dev/null 2>&1; then s=NO_WEIGHTS; '
-            f'elif ls "$p"/*.part "$p"/*.tmp >/dev/null 2>&1; then s=INCOMPLETE; '
             f'else s=OK; fi; '
             f'printf "  %-44s %s\\n" "{d}" "$s"; '
             f'[ "$s" = OK ] || errors=$((errors+1))'

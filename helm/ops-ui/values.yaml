@@ -30,8 +30,8 @@ env:
   vllmRouterUrl: http://vllm-router-service.vllm.svc.cluster.local:80
   litellmUrl: http://lite-helm-litellm.vllm.svc.cluster.local:4000
   litellmConfigMapName: lite-helm-litellm-config
-  embeddingsUrl: http://vllm-baai-bge-large-en-v15-cpu.vllm.svc.cluster.local:3000
-  whisperUrl: http://vllm-whisper-cpu-service.vllm.svc.cluster.local:80
+  embeddingsUrl: http://cpu-baai-bge-large-en-v15.vllm.svc.cluster.local:3000
+  whisperUrl: http://cpu-whisper-service.vllm.svc.cluster.local:80
   opsUiUrl: http://ops-ui-service.vllm.svc.cluster.local:8080
   playgroundUrl: http://playground.vllm.svc.cluster.local:7860
   requestTimeoutSeconds: "10"

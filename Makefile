@@ -30,6 +30,7 @@ TEST_TEMPERATURE ?= 0.7
 TEST_MAX_TOKENS  ?= 220
 GPU_TEST_LOCAL_PORT ?= 18000
 HELM_TIMEOUT     ?= 35m
+UNDEPLOY_TIMEOUT ?= 2m
 BOOTSTRAP_WAIT_TIMEOUT ?= 90m
 INGRESS_CERT_WAIT_SECONDS ?= 900
 INGRESS_CERT_MAX_RETRIES ?= 3
@@ -38,10 +39,15 @@ BOOTSTRAP_RELEASE ?= vllm-bootstrap
 BOOTSTRAP_RUN_ID ?= $(shell date +%Y%m%d%H%M%S)
 BOOTSTRAP_JOB_NAME ?= $(BOOTSTRAP_RELEASE)-auto-sleep-$(BOOTSTRAP_RUN_ID)
 INGRESS_CERTS ?= litellm-tls ops-ui-tls vllm-playground-tls
+STACK_CORE_EXTRA_VALUES ?=
+STACK_CORE_EXTRA_HELM_ARGS ?=
+MODEL_LOADER_EXTRA_VALUES ?=
+MODEL_LOADER_EXTRA_HELM_ARGS ?=
+MODEL_DIRS_EXTRA ?=
 
 # CPU companion service names (derived from release name + values.yaml)
-EMBEDDINGS_SVC   ?= vllm-baai-bge-large-en-v15-cpu
-WHISPER_SVC      ?= vllm-whisper-cpu-service
+EMBEDDINGS_SVC   ?= cpu-baai-bge-large-en-v15
+WHISPER_SVC      ?= cpu-whisper-service
 # Sample audio file used by make test-whisper (override with TEST_AUDIO=/path/to/file.mp3)
 TEST_AUDIO       ?= scripts/test-audio.mp3
 EMBEDDING_MODEL  ?= BAAI/bge-large-en-v1.5
@@ -308,8 +314,11 @@ model-download:
 	@test -n "$$HUGGING_FACE_TOKEN" || { \
 		printf 'HUGGING_FACE_TOKEN is not set. Export it first:\n  export HUGGING_FACE_TOKEN=hf_...\n' >&2; exit 1; }
 	$(HELM) upgrade --install vllm-models ./helm/models \
+		-f ./helm/models/values.yaml \
+		$(foreach values_file,$(MODEL_LOADER_EXTRA_VALUES),-f $(values_file)) \
 		-n "$(NAMESPACE)" --create-namespace \
 		--wait --wait-for-jobs --timeout "$(HELM_TIMEOUT)" \
+		$(MODEL_LOADER_EXTRA_HELM_ARGS) \
 		--set-string huggingfaceCredentials.token="$$HUGGING_FACE_TOKEN"
 
 # ── PVC health check ──────────────────────────────────────────────────────────
@@ -317,7 +326,7 @@ model-download:
 check-models:
 	@NAMESPACE="$(NAMESPACE)" KUBECTL="$(KUBECTL)" \
 	 PVC_NAME="$(PVC_NAME)" CHECK_IMG="$(CHECK_IMG)" \
-	 MODEL_DIRS="$(MODEL_DIRS)" \
+	 MODEL_DIRS="$(MODEL_DIRS) $(MODEL_DIRS_EXTRA)" \
 	 $(PYTHON) ./scripts/check_models.py
 
 # ── Deploy ────────────────────────────────────────────────────────────────────
@@ -331,7 +340,9 @@ deploy-core: deps
 		printf 'EXTERN_DOMAIN is not set. Set it in .env:\n  EXTERN_DOMAIN=k3s.yourdomain.io\n' >&2; exit 1; }
 	$(HELM) upgrade --install "$(CORE_RELEASE)" ./helm/stack-core \
 		-f ./helm/stack-core/values.yaml \
+		$(foreach values_file,$(STACK_CORE_EXTRA_VALUES),-f $(values_file)) \
 		-n "$(NAMESPACE)" --create-namespace \
+		$(STACK_CORE_EXTRA_HELM_ARGS) \
 		--set-string vllm.vllm-stack.routerSpec.ingress.hosts[0].host="llm-router.$(EXTERN_DOMAIN)" \
 		--set-string vllm.vllm-stack.routerSpec.ingress.hosts[0].paths[0].path="/" \
 		--set-string vllm.vllm-stack.routerSpec.ingress.hosts[0].paths[0].pathType="Prefix" \
@@ -434,10 +445,31 @@ deploy-playground:
 undeploy: undeploy-bootstrap undeploy-core
 
 undeploy-core:
-	$(HELM) uninstall --ignore-not-found "$(CORE_RELEASE)" -n "$(NAMESPACE)"
+	@set -eu; \
+	if ! $(HELM) uninstall --ignore-not-found --wait --timeout "$(UNDEPLOY_TIMEOUT)" "$(CORE_RELEASE)" -n "$(NAMESPACE)"; then \
+		printf 'Helm uninstall for %s timed out; checking for orphaned pods ...\n' "$(CORE_RELEASE)" >&2; \
+	fi; \
+	orphan_pods=$$($(KUBECTL) -n "$(NAMESPACE)" get pods -l app.kubernetes.io/instance="$(CORE_RELEASE)" -o name 2>/dev/null || true); \
+	if [ -n "$$orphan_pods" ]; then \
+		printf 'Force deleting orphaned core pods:\n%s\n' "$$orphan_pods"; \
+		$(KUBECTL) -n "$(NAMESPACE)" delete $$orphan_pods --force --grace-period=0 --ignore-not-found >/dev/null || true; \
+	fi
 
 undeploy-bootstrap:
-	$(HELM) uninstall --ignore-not-found "$(BOOTSTRAP_RELEASE)" -n "$(NAMESPACE)"
+	@set -eu; \
+	if ! $(HELM) uninstall --ignore-not-found --wait --timeout "$(UNDEPLOY_TIMEOUT)" "$(BOOTSTRAP_RELEASE)" -n "$(NAMESPACE)"; then \
+		printf 'Helm uninstall for %s timed out; checking for orphaned bootstrap jobs ...\n' "$(BOOTSTRAP_RELEASE)" >&2; \
+	fi; \
+	orphan_jobs=$$($(KUBECTL) -n "$(NAMESPACE)" get jobs -l app.kubernetes.io/instance="$(BOOTSTRAP_RELEASE)" -o name 2>/dev/null || true); \
+	if [ -n "$$orphan_jobs" ]; then \
+		printf 'Deleting orphaned bootstrap jobs:\n%s\n' "$$orphan_jobs"; \
+		$(KUBECTL) -n "$(NAMESPACE)" delete $$orphan_jobs --ignore-not-found >/dev/null || true; \
+	fi; \
+	orphan_pods=$$($(KUBECTL) -n "$(NAMESPACE)" get pods -l app.kubernetes.io/instance="$(BOOTSTRAP_RELEASE)" -o name 2>/dev/null || true); \
+	if [ -n "$$orphan_pods" ]; then \
+		printf 'Force deleting orphaned bootstrap pods:\n%s\n' "$$orphan_pods"; \
+		$(KUBECTL) -n "$(NAMESPACE)" delete $$orphan_pods --force --grace-period=0 --ignore-not-found >/dev/null || true; \
+	fi
 
 undeploy-vllm:
 	$(HELM) uninstall --ignore-not-found "$(CORE_RELEASE)" -n "$(NAMESPACE)"

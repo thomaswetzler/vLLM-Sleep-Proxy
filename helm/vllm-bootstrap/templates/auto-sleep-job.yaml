@@ -2,6 +2,12 @@
 {{- $runId := include "vllm-bootstrap.runId" . -}}
 {{- $jobName := printf "%s-auto-sleep-%s" (include "vllm-bootstrap.fullname" .) $runId | trunc 63 | trimSuffix "-" -}}
 {{- $coreRelease := .Values.coreReleaseName -}}
+{{- $modelsByNode := dict -}}
+{{- range $modelSpec := (index .Values "vllm-stack").servingEngineSpec.modelSpec }}
+{{- $nodeName := default "default" $modelSpec.nodeName -}}
+{{- $nodeModels := get $modelsByNode $nodeName | default (list) -}}
+{{- $_ := set $modelsByNode $nodeName (append $nodeModels $modelSpec) -}}
+{{- end }}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -35,12 +41,43 @@ spec:
             - -ec
             - |
               pids=""
-              {{- range $modelSpec := (index .Values "vllm-stack").servingEngineSpec.modelSpec }}
+              {{- range $nodeName := keys $modelsByNode | sortAlpha }}
               (
-                NODE={{ default "default" $modelSpec.nodeName | quote }}
-                ENGINE_URL={{ printf "http://%s-%s-engine-service:80" $coreRelease $modelSpec.name | quote }}
-                export NODE ENGINE_URL
-                /scripts/auto-sleep.sh
+                NODE={{ $nodeName | quote }}
+                export NODE
+                NODE_TIMEOUT="${AUTO_SLEEP_TIMEOUT_SECONDS:-1800}"
+                NODE_START_TS=$$(date +%s)
+                REMAINING_ENGINE_URLS="{{- range $modelSpec := get $modelsByNode $nodeName }} {{ printf "http://%s-%s-engine-service:80" $coreRelease $modelSpec.name }}{{- end }}"
+                while [ -n "$${REMAINING_ENGINE_URLS# }" ]; do
+                  SELECTED_ENGINE_URL=""
+                  for ENGINE_CANDIDATE in $$REMAINING_ENGINE_URLS; do
+                    if ENGINE_URL="$$ENGINE_CANDIDATE" python3 -c "import os, urllib.request; urllib.request.urlopen(os.environ['ENGINE_URL'] + '/health', timeout=2)" 2>/dev/null; then
+                      SELECTED_ENGINE_URL="$$ENGINE_CANDIDATE"
+                      break
+                    fi
+                  done
+                  if [ -z "$$SELECTED_ENGINE_URL" ]; then
+                    NOW=$$(date +%s)
+                    AGE=$$((NOW - NODE_START_TS))
+                    if [ "$$AGE" -ge "$$NODE_TIMEOUT" ]; then
+                      echo "[auto-sleep][$$NODE] Timeout nach $${AGE}s beim Warten auf ein ready Modell"
+                      exit 1
+                    fi
+                    sleep 5
+                    continue
+                  fi
+                  ENGINE_URL="$$SELECTED_ENGINE_URL"
+                  export ENGINE_URL
+                  echo "[auto-sleep][$$NODE] Bearbeite $$ENGINE_URL"
+                  /scripts/auto-sleep.sh
+                  NEXT_ENGINE_URLS=""
+                  for ENGINE_CANDIDATE in $$REMAINING_ENGINE_URLS; do
+                    if [ "$$ENGINE_CANDIDATE" != "$$SELECTED_ENGINE_URL" ]; then
+                      NEXT_ENGINE_URLS="$$NEXT_ENGINE_URLS $$ENGINE_CANDIDATE"
+                    fi
+                  done
+                  REMAINING_ENGINE_URLS="$$NEXT_ENGINE_URLS"
+                done
               ) &
               pids="$pids $!"
               {{- end }}

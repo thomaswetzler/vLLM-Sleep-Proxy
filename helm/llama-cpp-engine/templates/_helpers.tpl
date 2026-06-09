@@ -34,12 +34,12 @@ llama-cpp-engine/name: {{ .engine.name }}
 Deployment name.
 */}}
 {{- define "llama-cpp-engine.deploymentName" -}}
-{{- printf "%s-deployment" .engine.name | trunc 63 | trimSuffix "-" -}}
+{{- printf "llama-%s-deployment" .engine.name | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
 {{/*
 Service name.
 */}}
 {{- define "llama-cpp-engine.serviceName" -}}
-{{- printf "%s-llama-cpp-service" .engine.name | trunc 63 | trimSuffix "-" -}}
+{{- printf "llama-%s-service" .engine.name | trunc 63 | trimSuffix "-" -}}
 {{- end -}}

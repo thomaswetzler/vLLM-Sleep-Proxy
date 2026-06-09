@@ -56,6 +56,7 @@
             </div>
             <div class="diagram-row">
               <div data-component="cpu-models" class="node optional"></div>
+              <div data-component="llama-engines" class="node optional"></div>
               <div data-component="vllm-engines" class="node optional"></div>
             </div>
           </section>
@@ -64,8 +65,8 @@
 
       <section class="panel">
         <div class="panel-head">
-          <h2>Operations Summary for vLLM Models</h2>
-          <p>Modelzustand, Routing-Anteile und Wake-Fehler fuer die vLLM-Modelle</p>
+          <h2>Operations Summary for All Models</h2>
+          <p>Modelzustand ueber vLLM-, llama.cpp- und CPU-Modelle; Request- und Wake-Daten kommen aus dem Wake-on-Demand-Pfad</p>
         </div>
         <div class="summary-filter">
           <label>

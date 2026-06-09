@@ -4,6 +4,7 @@ image:
   pullPolicy: Always
 
 runtimeClassName: nvidia
+updateStrategy: Recreate
 
 service:
   port: 8080

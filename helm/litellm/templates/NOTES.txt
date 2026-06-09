@@ -10,7 +10,7 @@ The proxy expects the LiteLLM master key configured in the chart secret:
 
 Configured local backends:
   - inference-gateway.vllm.svc.cluster.local for chat/completions
-  - vllm-baai-bge-large-en-v15-cpu.vllm.svc.cluster.local:3000 for embeddings
+  - cpu-baai-bge-large-en-v15.vllm.svc.cluster.local:3000 for embeddings
 
 OpenRouter models become available once OPENROUTER_API_KEY is populated and the
 desired entries under `openRouterModels` are enabled.

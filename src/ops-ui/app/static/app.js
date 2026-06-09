@@ -145,8 +145,7 @@ function modelNodesMap(snapshot) {
 function populateFilters(snapshot) {
   const previous = currentFilters();
   const previousSummary = currentSummaryFilter();
-  const summaryNodes = uniqueSorted((snapshot.nodes || []).map((node) => node.name));
-  const routeNodes = uniqueSorted([
+  const allNodes = uniqueSorted([
     ...(snapshot.nodes || []).map((node) => node.name),
     ...(snapshot.models || []).flatMap((model) => (
       Array.isArray(model.nodes) && model.nodes.length
@@ -154,6 +153,8 @@ function populateFilters(snapshot) {
         : (model.node ? [model.node] : [])
     )),
   ]);
+  const summaryNodes = allNodes;
+  const routeNodes = allNodes;
   const models = uniqueSorted((snapshot.models || []).map((model) => model.id));
 
   summaryFilterNode.innerHTML = '<option value="">Alle Nodes</option>' + summaryNodes.map((node) => (
@@ -234,12 +235,16 @@ function applySummaryFilter(snapshot) {
     return snapshot;
   }
 
-  const vllmModels = (snapshot.vllm_models || []).filter((model) => {
+  const filterModelsByNode = (models) => (models || []).filter((model) => {
     const nodes = Array.isArray(model.nodes) && model.nodes.length
       ? model.nodes
       : (model.node ? [model.node] : []);
     return nodes.includes(filter.node);
   });
+  const models = filterModelsByNode(snapshot.models);
+  const vllmModels = filterModelsByNode(snapshot.vllm_models);
+  const llamaModels = filterModelsByNode(snapshot.llama_models);
+  const cpuModels = filterModelsByNode(snapshot.cpu_models);
 
   const requests = (snapshot.requests || []).filter((item) => item.node === filter.node);
 
@@ -253,7 +258,10 @@ function applySummaryFilter(snapshot) {
 
   return {
     ...snapshot,
+    models,
     vllm_models: vllmModels,
+    llama_models: llamaModels,
+    cpu_models: cpuModels,
     requests,
     routing: {
       ...(snapshot.routing || {}),
@@ -327,11 +335,12 @@ function renderSummary(snapshot) {
   const requests = snapshot.requests || [];
   const statusCounts = countStatuses(requests);
   const totalRequests = requests.length;
-  const vllmModels = snapshot.vllm_models || [];
+  const allModels = snapshot.models || [];
+  const readyStates = new Set(["awake", "permanent"]);
   const cards = [
-    ["Models", vllmModels.length],
-    ["Awake", vllmModels.filter((item) => item.state === "awake").length],
-    ["Sleeping", vllmModels.filter((item) => item.state === "sleeping").length],
+    ["Models", allModels.length],
+    ["Ready", allModels.filter((item) => readyStates.has(item.state)).length],
+    ["Sleeping", allModels.filter((item) => item.state === "sleeping").length],
     ["Wake-Fehler", statusCounts.wake_failed ?? 0],
     ["Requests", totalRequests],
     ["Fehler", statusCounts.error ?? 0],

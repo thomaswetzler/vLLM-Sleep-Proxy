@@ -10,7 +10,7 @@ sleep-proxy:
     engineCatalog:
       - model: local/qwen2.5-72b-instruct
         runtime: llama_cpp
-        endpoint: http://qwen25-72b-instruct-lab01-llama-cpp-service.vllm.svc.cluster.local:8080
+        endpoint: http://llama-qwen25-72b-instruct-lab01-service.vllm.svc.cluster.local:8080
         nodeName: lab01
         engineKey: llama_cpp:lab01:local/qwen2.5-72b-instruct
 
@@ -19,10 +19,10 @@ llama-cpp-engine:
     - name: qwen25-72b-instruct-lab01
       alias: local/qwen2.5-72b-instruct
       nodeName: lab01
-      modelFile: /data/models/qwen2.5-72b-instruct/qwen2.5-72b-instruct-q4_k_m.gguf
+      modelFile: /data/models/qwen2.5-72b-instruct/Qwen2.5-72B-Instruct-Q4_K_M.gguf
       resources:
         requests:
-          cpu: "4"
+          cpu: "1"
           memory: "16Gi"
           nvidia.com/gpu: "1"
         limits:

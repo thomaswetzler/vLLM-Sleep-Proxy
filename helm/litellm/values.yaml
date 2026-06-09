@@ -175,7 +175,7 @@ embeddingModels:
   - enabled: true
     alias: BAAI/bge-large-en-v1.5
     upstreamModel: BAAI/bge-large-en-v1.5
-    apiBase: http://vllm-baai-bge-large-en-v15-cpu.vllm.svc.cluster.local:3000/v1
+    apiBase: http://cpu-baai-bge-large-en-v15.vllm.svc.cluster.local:3000/v1
     apiKey: not-used
     extraParams: {}
     modelInfo: {}
@@ -205,7 +205,7 @@ extraModelList:
   - model_name: whisper-large-v3
     litellm_params:
       model: openai/whisper-large-v3
-      api_base: http://vllm-whisper-cpu-service.vllm.svc.cluster.local
+      api_base: http://cpu-whisper-service.vllm.svc.cluster.local
       api_key: not-used
 
 extraEnv: []

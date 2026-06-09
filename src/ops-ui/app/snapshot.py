@@ -134,20 +134,26 @@ def _normalize_runtime_base(url: str) -> str:
     return normalized
 
 
-def _engine_component_from_models(models: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Represent the serving engines as one diagram box."""
+def _runtime_component_from_models(
+    models: List[Dict[str, Any]],
+    *,
+    component_id: str,
+    label: str,
+    empty_detail: str,
+) -> Dict[str, Any]:
+    """Represent one runtime family as one diagram box."""
     if not models:
         return {
-            "id": "vllm-engines",
-            "label": "vLLM Engines",
+            "id": component_id,
+            "label": label,
             "status": "down",
-            "detail": "no models discovered",
+            "detail": empty_detail,
             "models": [],
         }
 
     return {
-        "id": "vllm-engines",
-        "label": "vLLM Engines",
+        "id": component_id,
+        "label": label,
         "status": "ok" if models else "down",
         "detail": "",
         "models": [
@@ -159,6 +165,16 @@ def _engine_component_from_models(models: List[Dict[str, Any]]) -> Dict[str, Any
             for item in models
         ],
     }
+
+
+def _runtime_bucket(model: Dict[str, Any]) -> str:
+    """Collapse runtime strings into the UI buckets we render explicitly."""
+    runtime = str(model.get("runtime", "") or "").strip().lower()
+    if runtime == "llama_cpp":
+        return "llama"
+    if runtime == "vllm":
+        return "vllm"
+    return "unknown"
 
 
 def _litellm_model_entries_from_configmap(payload: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -196,11 +212,11 @@ def _litellm_model_api_base(entry: Dict[str, Any]) -> str:
 def _classify_runtime_model(
     model_name: str,
     api_base: str,
-    vllm_model_ids: set[str],
+    managed_model_ids: set[str],
 ) -> str:
-    """Classify a LiteLLM model into vLLM, cpu or external buckets."""
-    if model_name in vllm_model_ids:
-        return "vllm"
+    """Classify a LiteLLM model into managed, cpu or external buckets."""
+    if model_name in managed_model_ids:
+        return "managed"
 
     normalized_base = _normalize_runtime_base(api_base)
     sleep_proxy_base = _normalize_runtime_base(settings.sleep_proxy_url)
@@ -208,7 +224,7 @@ def _classify_runtime_model(
     litellm_base = _normalize_runtime_base(settings.litellm_url)
 
     if normalized_base in {sleep_proxy_base, router_base, litellm_base}:
-        return "vllm"
+        return "managed"
     if ".svc.cluster.local" in normalized_base:
         return "cpu"
     if normalized_base:
@@ -257,12 +273,12 @@ async def _probe_runtime_api_base(
 async def _cpu_models_from_litellm_config(
     client: httpx.AsyncClient,
     model_entries: List[Dict[str, Any]],
-    vllm_models: List[Dict[str, Any]],
+    runtime_models: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
     """Build runtime CPU model records from LiteLLM config entries."""
-    vllm_model_ids = {
+    managed_model_ids = {
         str(model.get("id", "") or "")
-        for model in vllm_models
+        for model in runtime_models
         if str(model.get("id", "") or "")
     }
 
@@ -270,7 +286,7 @@ async def _cpu_models_from_litellm_config(
     for entry in model_entries:
         model_name = str(entry.get("model_name", "") or "").strip()
         api_base = _litellm_model_api_base(entry)
-        runtime_kind = _classify_runtime_model(model_name, api_base, vllm_model_ids)
+        runtime_kind = _classify_runtime_model(model_name, api_base, managed_model_ids)
         if runtime_kind != "cpu" or not model_name:
             continue
         cpu_entries.append((model_name, api_base))
@@ -457,10 +473,19 @@ async def build_snapshot() -> Dict[str, Any]:
                 }
             )
 
-    vllm_models = sleep_state.get("models", []) if isinstance(sleep_state, dict) else []
+    runtime_models = sleep_state.get("models", []) if isinstance(sleep_state, dict) else []
     nodes = sleep_state.get("nodes", []) if isinstance(sleep_state, dict) else []
     requests = sleep_state.get("recent_requests", []) if isinstance(sleep_state, dict) else []
     routing = {} if isinstance(sleep_state, dict) else {}
+
+    vllm_models = [
+        model for model in runtime_models
+        if isinstance(model, dict) and _runtime_bucket(model) == "vllm"
+    ]
+    llama_models = [
+        model for model in runtime_models
+        if isinstance(model, dict) and _runtime_bucket(model) == "llama"
+    ]
 
     node_memory: List[Dict[str, Any]] = []
     litellm_configmap_payload: Optional[Dict[str, Any]] = None
@@ -506,10 +531,25 @@ async def build_snapshot() -> Dict[str, Any]:
 
     litellm_model_entries = _litellm_model_entries_from_configmap(litellm_configmap_payload)
     async with httpx.AsyncClient(timeout=settings.request_timeout_seconds) as client:
-        cpu_models = await _cpu_models_from_litellm_config(client, litellm_model_entries, vllm_models)
-    all_models = [*vllm_models, *cpu_models]
+        cpu_models = await _cpu_models_from_litellm_config(client, litellm_model_entries, runtime_models)
+    all_models = [*vllm_models, *llama_models, *cpu_models]
 
-    components.append(_engine_component_from_models(vllm_models))
+    components.append(
+        _runtime_component_from_models(
+            vllm_models,
+            component_id="vllm-engines",
+            label="vLLM Engines",
+            empty_detail="no vLLM models discovered",
+        )
+    )
+    components.append(
+        _runtime_component_from_models(
+            llama_models,
+            component_id="llama-engines",
+            label="llama.cpp Engines",
+            empty_detail="no llama.cpp models discovered",
+        )
+    )
     components.append(_cpu_component_from_models(cpu_models))
 
     return {
@@ -517,6 +557,7 @@ async def build_snapshot() -> Dict[str, Any]:
         "components": components,
         "models": all_models,
         "vllm_models": vllm_models,
+        "llama_models": llama_models,
         "cpu_models": cpu_models,
         "nodes": nodes,
         "node_memory": node_memory,
@@ -524,7 +565,7 @@ async def build_snapshot() -> Dict[str, Any]:
         "request_paths": _path_counts(requests),
         "request_status": _status_counts(requests),
         "request_series": _request_series(requests),
-        "model_summary": _model_summary(vllm_models),
+        "model_summary": _model_summary(all_models),
         "routing": {
             "auto_model": routing.get("auto_model", {}),
             "default_model": routing.get("default_model"),
