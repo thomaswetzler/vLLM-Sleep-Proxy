@@ -1,0 +1,6 @@
+apiVersion: v2
+name: llama-cpp-engine
+description: Wake/Sleep wrapper chart for llama.cpp engines.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

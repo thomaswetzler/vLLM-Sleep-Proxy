@@ -13,6 +13,9 @@ service:
 env:
   # URL des vllm-router-service (ClusterIP)
   routerUrl: http://vllm-router-service:80
+  # Optionale statische Engine-Ziele fuer Nicht-vLLM-Runtimes wie llama.cpp.
+  # Diese Eintraege werden als JSON in ENGINE_CATALOG_JSON an den Proxy gereicht.
+  engineCatalog: []
   # Maximale Wartezeit bis Modell aufgewacht ist (Sekunden)
   wakeTimeoutSeconds: "120"
   # Polling-Intervall beim Wake-up-Check (Sekunden)

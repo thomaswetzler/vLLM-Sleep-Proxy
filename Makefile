@@ -56,6 +56,7 @@ KUBECTL ?= kubectl
 IMAGE_REGISTRY   ?= ghcr.io/thomaswetzler
 IMAGE_NAME       ?= sleep-proxy
 IMAGE_TAG        ?= latest
+LLAMA_CPP_ENGINE_IMAGE_NAME ?= llama-cpp-engine
 
 # PVC check — keep in sync with helm/models/values.yaml loader.models
 PVC_NAME    ?= vllm-model-cache
@@ -67,7 +68,7 @@ MODEL_DIRS  ?= baai-bge-large-en-v1.5 gemma-3-4b-it llama-3.1-8b-instruct \
         deps model-download check-models \
         deploy deploy-core deploy-bootstrap deploy-vllm deploy-sleep-proxy deploy-litellm deploy-ops-ui deploy-playground \
         undeploy undeploy-core undeploy-bootstrap undeploy-vllm undeploy-sleep-proxy undeploy-litellm undeploy-ops-ui undeploy-playground \
-        build push
+        build push build-llama-cpp-engine push-llama-cpp-engine
 
 help:
 	@printf '%s\n' \
@@ -99,6 +100,8 @@ help:
 		'  make deps               Update Helm chart dependencies' \
 		'  make build              Build sleep-proxy Docker image' \
 		'  make push               Push sleep-proxy Docker image to registry' \
+		'  make build-llama-cpp-engine Build llama-cpp-engine Docker image' \
+		'  make push-llama-cpp-engine  Push llama-cpp-engine Docker image to registry' \
 		''
 
 # ── Status ───────────────────────────────────────────────────────────────────
@@ -458,3 +461,9 @@ build:
 
 push: build
 	docker push $(IMAGE_REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG)
+
+build-llama-cpp-engine:
+	docker build --platform linux/amd64 -t $(IMAGE_REGISTRY)/$(LLAMA_CPP_ENGINE_IMAGE_NAME):$(IMAGE_TAG) ./src/llama-cpp-engine
+
+push-llama-cpp-engine: build-llama-cpp-engine
+	docker push $(IMAGE_REGISTRY)/$(LLAMA_CPP_ENGINE_IMAGE_NAME):$(IMAGE_TAG)

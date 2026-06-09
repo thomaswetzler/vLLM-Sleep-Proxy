@@ -9,6 +9,9 @@ dependencies:
   - name: sleep-proxy
     version: 0.1.0
     repository: file://../sleep-proxy
+  - name: llama-cpp-engine
+    version: 0.1.0
+    repository: file://../llama-cpp-engine
   - name: vllm
     version: 0.1.0
     repository: file://../vllm

@@ -31,6 +31,8 @@ spec:
           env:
             - name: ROUTER_URL
               value: {{ .Values.env.routerUrl | quote }}
+            - name: ENGINE_CATALOG_JSON
+              value: {{ toJson .Values.env.engineCatalog | quote }}
             - name: WAKE_TIMEOUT_SECONDS
               value: {{ .Values.env.wakeTimeoutSeconds | quote }}
             - name: POLL_INTERVAL_SECONDS

@@ -49,6 +49,7 @@ class _Settings:
     auto_sleep_delay_seconds: float = float(os.getenv("AUTO_SLEEP_DELAY_SECONDS", "2"))
     auto_sleep_level: int = int(os.getenv("AUTO_SLEEP_LEVEL", "1"))
     debug_history_size: int = int(os.getenv("DEBUG_HISTORY_SIZE", "200"))
+    engine_catalog_json: str = os.getenv("ENGINE_CATALOG_JSON", "[]").strip()
 
 
 settings = _Settings()

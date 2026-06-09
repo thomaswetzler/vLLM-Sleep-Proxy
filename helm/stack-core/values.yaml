@@ -2,6 +2,11 @@ litellm:
   # Keep the service DNS stable for ops-ui and playground defaults.
   fullnameOverride: lite-helm-litellm
 
+llama-cpp-engine:
+  # The hybrid runtime path stays opt-in until a GGUF model file and image are
+  # prepared for the target node. See values.llama-cpp-example.yaml.
+  engines: []
+
 playground:
   # Preserve the existing service/ingress object names when deployed via the
   # umbrella release.

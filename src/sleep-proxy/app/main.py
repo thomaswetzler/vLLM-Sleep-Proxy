@@ -22,7 +22,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from .config import settings
-from . import kube_client, router_client
+from . import engine_client, kube_client
 from .proxy import forward_request, get_recent_requests, get_runtime_snapshot
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -74,8 +74,8 @@ def _include_node_metadata(request: Request) -> bool:
 
 
 async def _models_response(*, include_node: bool) -> JSONResponse:
-    """Return router `/v1/models`, optionally enriched with Kubernetes metadata."""
-    payload = await router_client.get_models_payload()
+    """Return aggregated `/v1/models`, optionally enriched with Kubernetes metadata."""
+    payload = await engine_client.get_models_payload()
 
     data = payload.get("data")
     if include_node and isinstance(data, list):
@@ -98,9 +98,9 @@ async def _models_response(*, include_node: bool) -> JSONResponse:
 
 async def _debug_models_state() -> Dict[str, Any]:
     """Aggregate model, node and runtime data for the standalone ops UI."""
-    payload = await router_client.get_models_payload()
+    payload = await engine_client.get_models_payload()
     model_locations = await kube_client.get_model_locations()
-    engine_groups = await router_client.get_engine_groups()
+    engine_groups = await engine_client.get_engine_groups()
     runtime = get_runtime_snapshot()
 
     data = payload.get("data")
@@ -121,10 +121,15 @@ async def _debug_models_state() -> Dict[str, Any]:
 
             location = model_locations.get(model_id, {})
             engine_ids = engine_groups.get(model_id, [])
+            resolved_engine = await engine_client.resolve_engine(model_id)
             states: List[str] = []
             for engine_id in engine_ids:
                 try:
-                    states.append("sleeping" if await router_client.is_sleeping(engine_id) else "awake")
+                    engine = await engine_client.engine_for_model_and_id(model_id, engine_id)
+                    if engine is None:
+                        states.append("unknown")
+                    else:
+                        states.append("sleeping" if await engine_client.is_sleeping(engine) else "awake")
                 except Exception:
                     states.append("unknown")
 
@@ -142,6 +147,7 @@ async def _debug_models_state() -> Dict[str, Any]:
             models.append(
                 {
                     "id": model_id,
+                    "runtime": resolved_engine.runtime if resolved_engine is not None else "unknown",
                     "state": state,
                     "engine_ids": engine_ids,
                     "engine_states": states,

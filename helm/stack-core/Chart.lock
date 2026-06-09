@@ -2,6 +2,9 @@ dependencies:
 - name: sleep-proxy
   repository: file://../sleep-proxy
   version: 0.1.0
+- name: llama-cpp-engine
+  repository: file://../llama-cpp-engine
+  version: 0.1.0
 - name: vllm
   repository: file://../vllm
   version: 0.1.0
@@ -14,5 +17,5 @@ dependencies:
 - name: playground
   repository: file://../playground
   version: 0.1.0
-digest: sha256:8ba7dd771697671ab4b121bbb7b8500ede164005ef2508a954161eeb93b39b91
-generated: "2026-05-09T11:39:19.964914+02:00"
+digest: sha256:61ee4d201b113c78025ecb812225ad31c2c0fc3335f75abd2b2913831c27c73d
+generated: "2026-06-09T17:36:14.853981+02:00"

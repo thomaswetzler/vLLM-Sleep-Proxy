@@ -159,6 +159,14 @@ localModels:
     extraParams: {}
     modelInfo:
       lane: reasoning
+  - enabled: false
+    alias: local/qwen2.5-72b-instruct
+    upstreamModel: local/qwen2.5-72b-instruct
+    apiBase: http://sleep-proxy-service.vllm.svc.cluster.local:8080/v1
+    apiKey: not-used
+    extraParams: {}
+    modelInfo:
+      lane: large-offload
 
 # Embeddings stay on the dedicated CPU TEI endpoint but become available under
 # the same LiteLLM proxy URL. TEI is addressed with its public model id even

@@ -2,10 +2,10 @@
 
 Kern-Ablauf pro Inferenz-Request:
   1. JSON-Body lesen, model-Feld extrahieren
-  2. engine_id via router_client.get_engines() ermitteln (Cache)
+  2. engine_id via Runtime-Katalog oder Router ermitteln (Cache)
   3. Konfliktmodell auf demselben Node ggf. schlafen legen
   4. is_sleeping(engine_id)?  → wake_up() + poll_until_ready()
-  5. Request 1:1 an ROUTER_URL weiterleiten (httpx, Streaming-Support)
+  5. Request 1:1 an die passende Runtime weiterleiten (httpx, Streaming-Support)
   6. Nach Request-Ende Engine wieder schlafen legen
   7. Response 1:1 zurück an den Client
 
@@ -33,7 +33,7 @@ from .metrics import (
     WAKE_DURATION,
     WAKE_TOTAL,
 )
-from . import kube_client, router_client
+from . import engine_client, kube_client
 
 logger = logging.getLogger(__name__)
 
@@ -106,12 +106,20 @@ async def _resolve_model_node(model: str) -> Optional[str]:
         location = (await kube_client.get_model_locations()).get(model, {})
     except Exception as exc:
         logger.warning("Node-Auflösung für Modell %r fehlgeschlagen: %s", model, exc)
-        return None
+        return engine_client.resolve_model_node_hint(model)
 
     node_name = location.get("node")
     if isinstance(node_name, str) and node_name:
         return node_name
-    return None
+    return engine_client.resolve_model_node_hint(model)
+
+
+def _with_query_string(base_url: str, request: Request) -> str:
+    """Append the original query string to a downstream URL."""
+    query_string = str(request.url.query or "").strip()
+    if not query_string:
+        return base_url
+    return f"{base_url}?{query_string}"
 
 
 def _location_matches_node(location: Dict[str, Any], node_name: str) -> bool:
@@ -143,7 +151,7 @@ async def _sleep_conflicting_engines_on_node(
     """
     try:
         model_locations = await kube_client.get_model_locations()
-        engine_map = await router_client.get_engines()
+        engine_groups = await engine_client.get_engine_groups()
     except Exception as exc:
         logger.warning(
             "Konfliktpruefung fuer Node %r vor Wake-up von %r fehlgeschlagen: %s",
@@ -154,21 +162,27 @@ async def _sleep_conflicting_engines_on_node(
         return
 
     conflicts = []
-    for model_path, engine_id in engine_map.items():
-        if engine_id == target_engine_id or model_path == target_model:
+    for model_path, engine_ids in engine_groups.items():
+        if model_path == target_model:
             continue
 
         location = model_locations.get(model_path)
         if not isinstance(location, dict) or not _location_matches_node(location, node_name):
             continue
 
-        conflicts.append((model_path, engine_id))
+        for engine_id in engine_ids:
+            if engine_id == target_engine_id:
+                continue
+            conflicts.append((model_path, engine_id))
 
     for model_path, engine_id in conflicts:
+        conflict_engine = await engine_client.engine_for_model_and_id(model_path, engine_id)
+        if conflict_engine is None:
+            continue
         lock = await _get_engine_lock(engine_id)
         async with lock:
             try:
-                sleeping = await router_client.is_sleeping(engine_id)
+                sleeping = await engine_client.is_sleeping(conflict_engine)
             except Exception as exc:
                 logger.warning(
                     "is_sleeping-Check fuer Konfliktmodell %r (engine %r) fehlgeschlagen: %s",
@@ -189,8 +203,8 @@ async def _sleep_conflicting_engines_on_node(
                 engine_id,
             )
             try:
-                await router_client.sleep(engine_id, level=settings.auto_sleep_level)
-                await router_client.poll_until_sleeping(engine_id)
+                await engine_client.sleep(conflict_engine, level=settings.auto_sleep_level)
+                await engine_client.poll_until_sleeping(conflict_engine)
             except Exception as exc:
                 raise HTTPException(
                     status_code=503,
@@ -319,6 +333,7 @@ async def _end_engine_request(
     *,
     schedule_sleep: bool,
     node_name: Optional[str] = None,
+    engine: Optional[engine_client.BackendEngine] = None,
 ) -> None:
     """Update inflight state and schedule auto-sleep after the last request."""
     if not settings.auto_sleep_enabled:
@@ -343,9 +358,13 @@ async def _end_engine_request(
             await existing
 
     if should_schedule:
+        if engine is None:
+            engine = await engine_client.resolve_engine(model)
+        if engine is None:
+            return
         task = asyncio.create_task(
             _sleep_engine_after_idle(
-                engine_id,
+                engine,
                 model,
                 node_name=node_name,
             )
@@ -355,12 +374,13 @@ async def _end_engine_request(
 
 
 async def _sleep_engine_after_idle(
-    engine_id: str,
+    engine: engine_client.BackendEngine,
     model: str,
     *,
     node_name: Optional[str] = None,
 ) -> None:
     """Sleep an engine after the configured idle delay if nothing restarted it."""
+    engine_id = engine.engine_id
     try:
         if settings.auto_sleep_delay_seconds > 0:
             await asyncio.sleep(settings.auto_sleep_delay_seconds)
@@ -383,11 +403,11 @@ async def _sleep_engine_after_idle(
 
             released = False
             try:
-                if await router_client.is_sleeping(engine_id):
+                if await engine_client.is_sleeping(engine):
                     released = True
                 else:
-                    await router_client.sleep(
-                        engine_id,
+                    await engine_client.sleep(
+                        engine,
                         level=settings.auto_sleep_level,
                     )
                     released = True
@@ -398,7 +418,7 @@ async def _sleep_engine_after_idle(
                     )
             except Exception as exc:
                 with suppress(Exception):
-                    released = await router_client.is_sleeping(engine_id)
+                    released = await engine_client.is_sleeping(engine)
 
                 logger.warning(
                     "Auto-Sleep fuer engine %r (Modell %r) fehlgeschlagen: %s",
@@ -429,21 +449,22 @@ async def _sleep_engine_after_idle(
 
 async def ensure_awake(
     model: str,
-    engine_id: Optional[str] = None,
+    engine: Optional[engine_client.BackendEngine] = None,
     *,
     node_name: Optional[str] = None,
-) -> Tuple[Optional[str], bool]:
-    """Weckt das Modell auf, wenn nötig. Gibt ``(engine_id, woke_up)`` zurück.
+) -> Tuple[Optional[engine_client.BackendEngine], bool]:
+    """Weckt das Modell auf, wenn nötig. Gibt ``(engine, woke_up)`` zurück.
 
-    Wenn kein engine_id gefunden wird (unbekanntes Modell), wird None zurückgegeben
-    – der Request wird dann trotzdem weitergeleitet (Router entscheidet).
+    Wenn keine passende Engine gefunden wird, wird ``None`` zurückgegeben und
+    der Request läuft weiter zum Standard-Backend.
     """
-    if engine_id is None:
-        engine_id = await router_client.resolve_engine_id(model)
-    if engine_id is None:
+    if engine is None:
+        engine = await engine_client.resolve_engine(model)
+    if engine is None:
         logger.debug("engine_id für Modell %r nicht gefunden – kein Wake-on-Demand", model)
         return None, False
 
+    engine_id = engine.engine_id
     lock = await _get_engine_lock(engine_id)
     async with lock:
         if node_name is not None:
@@ -454,25 +475,25 @@ async def ensure_awake(
             )
 
         try:
-            sleeping = await router_client.is_sleeping(engine_id)
+            sleeping = await engine_client.is_sleeping(engine)
         except Exception as exc:
             logger.warning(
                 "is_sleeping-Check für engine %r fehlgeschlagen: %s – weiter ohne Wake",
                 engine_id,
                 exc,
             )
-            return engine_id, False
+            return engine, False
 
         if not sleeping:
-            return engine_id, False
+            return engine, False
 
         logger.info("engine %r schläft – starte wake_up für Modell %r", engine_id, model)
         WAKE_TOTAL.labels(model=model).inc()
         t0 = time.monotonic()
 
         try:
-            await router_client.wake_up(engine_id)
-            await router_client.poll_until_ready(engine_id)
+            await engine_client.wake_up(engine)
+            await engine_client.poll_until_ready(engine)
         except TimeoutError as exc:
             WAKE_DURATION.labels(model=model).observe(time.monotonic() - t0)
             raise HTTPException(
@@ -486,7 +507,7 @@ async def ensure_awake(
             "engine %r aufgewacht in %.1fs", engine_id, elapsed
         )
 
-    return engine_id, True
+    return engine, True
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -686,7 +707,6 @@ async def forward_request(request: Request, path: str) -> Response:
     Für Inferenz-Endpunkte wird vorher ensure_awake() aufgerufen.
     Streaming (stream=True im Body oder Accept: text/event-stream) wird unterstützt.
     """
-    url = f"{settings.router_url}/{path.lstrip('/')}"
     body: bytes = await request.body()
     headers = _forward_headers(request)
     started = time.monotonic()
@@ -704,7 +724,8 @@ async def forward_request(request: Request, path: str) -> Response:
         for ep in ("/v1/completions", "/v1/chat/completions", "/completions", "/chat/completions")
     )
     stream_requested = False
-    engine_id: Optional[str] = None
+    url = _with_query_string(f"{settings.router_url}/{path.lstrip('/')}", request)
+    engine: Optional[engine_client.BackendEngine] = None
     node_name: Optional[str] = None
     tracked_engine = False
     tracked_node = False
@@ -736,17 +757,23 @@ async def forward_request(request: Request, path: str) -> Response:
 
     if model:
         REQUESTS_TOTAL.labels(model=model, status="started").inc()
-        engine_id = await router_client.resolve_engine_id(model)
-        if engine_id is not None:
+        engine = await engine_client.resolve_engine(model)
+        if engine is not None:
             node_name = await _resolve_model_node(model)
             if node_name is not None:
-                await _begin_node_request(node_name, engine_id, model)
+                await _begin_node_request(node_name, engine.engine_id, model)
                 tracked_node = True
-            await _begin_engine_request(engine_id)
+            await _begin_engine_request(engine.engine_id)
             tracked_engine = True
         try:
-            engine_id, woke_up = await ensure_awake(model, engine_id, node_name=node_name)
-            schedule_sleep = engine_id is not None
+            engine, woke_up = await ensure_awake(model, engine, node_name=node_name)
+            schedule_sleep = engine is not None
+            if engine is not None:
+                url = await engine_client.request_url_for_model(
+                    model,
+                    path,
+                    query_string=str(request.url.query or ""),
+                )
         except HTTPException:
             _record_request(
                 {
@@ -758,23 +785,24 @@ async def forward_request(request: Request, path: str) -> Response:
                     "route_rule": route_rule,
                     "route_reason": route_reason,
                         "node": node_name,
-                        "engine_id": engine_id,
+                        "engine_id": engine.engine_id if engine is not None else None,
                         "status": "wake_failed",
                         "wake_retries": 0,
                         "duration_ms": round((time.monotonic() - started) * 1000, 1),
                     }
                 )
-            if tracked_engine and engine_id is not None:
+            if tracked_engine and engine is not None:
                 await _end_engine_request(
-                    engine_id,
+                    engine.engine_id,
                     model,
                     schedule_sleep=False,
                     node_name=node_name,
+                    engine=engine,
                 )
-            if tracked_node and node_name is not None and engine_id is not None:
+            if tracked_node and node_name is not None and engine is not None:
                 await _end_node_request(
                     node_name,
-                    engine_id,
+                    engine.engine_id,
                     model,
                     schedule_sleep=False,
                 )
@@ -791,23 +819,24 @@ async def forward_request(request: Request, path: str) -> Response:
                     "route_rule": route_rule,
                     "route_reason": route_reason,
                         "node": node_name,
-                        "engine_id": engine_id,
+                        "engine_id": engine.engine_id if engine is not None else None,
                         "status": "wake_failed",
                         "wake_retries": 0,
                         "duration_ms": round((time.monotonic() - started) * 1000, 1),
                     }
                 )
-            if tracked_engine and engine_id is not None:
+            if tracked_engine and engine is not None:
                 await _end_engine_request(
-                    engine_id,
+                    engine.engine_id,
                     model,
                     schedule_sleep=False,
                     node_name=node_name,
+                    engine=engine,
                 )
-            if tracked_node and node_name is not None and engine_id is not None:
+            if tracked_node and node_name is not None and engine is not None:
                 await _end_node_request(
                     node_name,
-                    engine_id,
+                    engine.engine_id,
                     model,
                     schedule_sleep=False,
                 )
@@ -838,23 +867,24 @@ async def forward_request(request: Request, path: str) -> Response:
                         "route_rule": route_rule,
                         "route_reason": route_reason,
                         "node": node_name,
-                        "engine_id": engine_id,
+                        "engine_id": engine.engine_id if engine is not None else None,
                         "status": "network_error",
                         "wake_retries": 0,
                         "duration_ms": round((time.monotonic() - started) * 1000, 1),
                     }
                 )
-            if tracked_engine and engine_id is not None:
+            if tracked_engine and engine is not None:
                 await _end_engine_request(
-                    engine_id,
+                    engine.engine_id,
                     model,
                     schedule_sleep=schedule_sleep,
                     node_name=node_name,
+                    engine=engine,
                 )
-            if tracked_node and node_name is not None and engine_id is not None:
+            if tracked_node and node_name is not None and engine is not None:
                 await _end_node_request(
                     node_name,
-                    engine_id,
+                    engine.engine_id,
                     model,
                     schedule_sleep=schedule_sleep,
                 )
@@ -884,7 +914,7 @@ async def forward_request(request: Request, path: str) -> Response:
                         "route_rule": route_rule,
                         "route_reason": route_reason,
                         "node": node_name,
-                        "engine_id": engine_id,
+                        "engine_id": engine.engine_id if engine is not None else None,
                         "status": "error",
                         "status_code": stream_status_code,
                         "wake_retries": wake_retries,
@@ -893,17 +923,18 @@ async def forward_request(request: Request, path: str) -> Response:
                 )
                 REQUESTS_TOTAL.labels(model=model, status="ok").inc()
                 FORWARDED_TOTAL.labels(model=model, status_code=str(stream_status_code)).inc()
-            if tracked_engine and engine_id is not None:
+            if tracked_engine and engine is not None:
                 await _end_engine_request(
-                    engine_id,
+                    engine.engine_id,
                     model,
                     schedule_sleep=schedule_sleep,
                     node_name=node_name,
+                    engine=engine,
                 )
-            if tracked_node and node_name is not None and engine_id is not None:
+            if tracked_node and node_name is not None and engine is not None:
                 await _end_node_request(
                     node_name,
-                    engine_id,
+                    engine.engine_id,
                     model,
                     schedule_sleep=schedule_sleep,
                 )
@@ -926,24 +957,25 @@ async def forward_request(request: Request, path: str) -> Response:
                         "route_rule": route_rule,
                         "route_reason": route_reason,
                         "node": node_name,
-                        "engine_id": engine_id,
+                        "engine_id": engine.engine_id if engine is not None else None,
                         "status": "streaming",
                         "status_code": stream_status_code,
                         "wake_retries": wake_retries,
                         "duration_ms": round((time.monotonic() - started) * 1000, 1),
                     }
                 )
-            if tracked_engine and engine_id is not None:
+            if tracked_engine and engine is not None:
                 await _end_engine_request(
-                    engine_id,
+                    engine.engine_id,
                     model,
                     schedule_sleep=schedule_sleep,
                     node_name=node_name,
+                    engine=engine,
                 )
-            if tracked_node and node_name is not None and engine_id is not None:
+            if tracked_node and node_name is not None and engine is not None:
                 await _end_node_request(
                     node_name,
-                    engine_id,
+                    engine.engine_id,
                     model,
                     schedule_sleep=schedule_sleep,
                 )
@@ -981,23 +1013,24 @@ async def forward_request(request: Request, path: str) -> Response:
                     "route_rule": route_rule,
                     "route_reason": route_reason,
                     "node": node_name,
-                    "engine_id": engine_id,
+                    "engine_id": engine.engine_id if engine is not None else None,
                     "status": "network_error",
                     "wake_retries": 0,
                     "duration_ms": round((time.monotonic() - started) * 1000, 1),
                 }
             )
-        if tracked_engine and engine_id is not None:
+        if tracked_engine and engine is not None:
             await _end_engine_request(
-                engine_id,
+                engine.engine_id,
                 model,
                 schedule_sleep=schedule_sleep,
                 node_name=node_name,
+                engine=engine,
             )
-        if tracked_node and node_name is not None and engine_id is not None:
+        if tracked_node and node_name is not None and engine is not None:
             await _end_node_request(
                 node_name,
-                engine_id,
+                engine.engine_id,
                 model,
                 schedule_sleep=schedule_sleep,
             )
@@ -1023,7 +1056,7 @@ async def forward_request(request: Request, path: str) -> Response:
                 "route_rule": route_rule,
                 "route_reason": route_reason,
                 "node": node_name,
-                "engine_id": engine_id,
+                "engine_id": engine.engine_id if engine is not None else None,
                 "status": "ok" if status_code < 400 else "error",
                 "status_code": status_code,
                 "wake_retries": wake_retries,
@@ -1032,17 +1065,18 @@ async def forward_request(request: Request, path: str) -> Response:
         )
         REQUESTS_TOTAL.labels(model=model, status="ok").inc()
         FORWARDED_TOTAL.labels(model=model, status_code=str(status_code)).inc()
-        if tracked_engine and engine_id is not None:
+        if tracked_engine and engine is not None:
             await _end_engine_request(
-                engine_id,
+                engine.engine_id,
                 model,
                 schedule_sleep=schedule_sleep,
                 node_name=node_name,
+                engine=engine,
             )
-        if tracked_node and node_name is not None and engine_id is not None:
+        if tracked_node and node_name is not None and engine is not None:
             await _end_node_request(
                 node_name,
-                engine_id,
+                engine.engine_id,
                 model,
                 schedule_sleep=schedule_sleep,
             )

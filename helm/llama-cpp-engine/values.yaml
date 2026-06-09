@@ -1,0 +1,27 @@
+image:
+  repository: ghcr.io/thomaswetzler/llama-cpp-engine
+  tag: latest
+  pullPolicy: Always
+
+runtimeClassName: nvidia
+
+service:
+  port: 8080
+  targetPort: 8080
+
+sharedModelCache:
+  claimName: vllm-model-cache
+
+engines: []
+
+probes:
+  liveness:
+    path: /health
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    failureThreshold: 3
+  readiness:
+    path: /health
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    failureThreshold: 3

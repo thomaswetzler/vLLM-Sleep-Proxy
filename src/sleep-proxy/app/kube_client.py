@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 _SERVICEACCOUNT_DIR = Path("/var/run/secrets/kubernetes.io/serviceaccount")
 _TOKEN_PATH = _SERVICEACCOUNT_DIR / "token"
 _NAMESPACE_PATH = _SERVICEACCOUNT_DIR / "namespace"
+_ENGINE_CONTAINER_NAMES = {"vllm", "llama-cpp-engine"}
 
 _model_locations_cache: Dict[str, Dict[str, Any]] = {}
 _model_locations_cache_ts: float = 0.0
@@ -63,6 +64,19 @@ def _iter_model_ids(container: Dict[str, Any]) -> Iterable[str]:
     """Yield served aliases first and raw model paths as a compatibility fallback."""
     served_model_names: List[str] = []
     model_paths: List[str] = []
+    env_values = container.get("env")
+    if isinstance(env_values, list):
+        for item in env_values:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name", "") or "").strip()
+            value = str(item.get("value", "") or "").strip()
+            if not name or not value:
+                continue
+            if name in {"ENGINE_MODEL_ALIAS", "LLAMA_ARG_ALIAS"}:
+                served_model_names.append(value)
+            elif name in {"ENGINE_MODEL_FILE", "ENGINE_MODEL_PATH", "LLAMA_ARG_MODEL"} and value.startswith("/data/models/"):
+                model_paths.append(value)
 
     for field in ("command", "args"):
         values = container.get(field)
@@ -125,7 +139,7 @@ def _pod_is_ready(pod: Dict[str, Any]) -> bool:
     for container_status in container_statuses:
         if not isinstance(container_status, dict):
             continue
-        if container_status.get("name") == "vllm":
+        if container_status.get("name") in _ENGINE_CONTAINER_NAMES:
             return bool(container_status.get("ready"))
     return False
 
@@ -164,7 +178,7 @@ def _extract_model_locations(pods_payload: Dict[str, Any]) -> Dict[str, Dict[str
 
         sort_key = _pod_sort_key(pod)
         for container in containers:
-            if not isinstance(container, dict) or container.get("name") != "vllm":
+            if not isinstance(container, dict) or container.get("name") not in _ENGINE_CONTAINER_NAMES:
                 continue
             for model_path in _iter_model_ids(container):
                 # Model ids come from the actual container command, not from pod

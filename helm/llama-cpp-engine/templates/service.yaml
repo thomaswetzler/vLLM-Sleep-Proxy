@@ -1,0 +1,20 @@
+{{- range $engine := .Values.engines }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "llama-cpp-engine.serviceName" (dict "root" $ "engine" $engine) }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "llama-cpp-engine.labels" (dict "root" $ "engine" $engine) | nindent 4 }}
+    llama-cpp-engine/name: {{ $engine.name }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "llama-cpp-engine.selectorLabels" (dict "root" $ "engine" $engine) | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ $.Values.service.port }}
+      targetPort: {{ $.Values.service.targetPort }}
+      protocol: TCP
+{{- end }}

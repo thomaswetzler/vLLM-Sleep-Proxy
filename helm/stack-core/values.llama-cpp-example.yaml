@@ -1,0 +1,49 @@
+# Example overlay for one hybrid llama.cpp lane on lab01.
+#
+# Usage:
+#   helm upgrade --install vllm ./helm/stack-core \
+#     -f ./helm/stack-core/values.yaml \
+#     -f ./helm/stack-core/values.llama-cpp-example.yaml
+
+sleep-proxy:
+  env:
+    engineCatalog:
+      - model: local/qwen2.5-72b-instruct
+        runtime: llama_cpp
+        endpoint: http://qwen25-72b-instruct-lab01-llama-cpp-service.vllm.svc.cluster.local:8080
+        nodeName: lab01
+        engineKey: llama_cpp:lab01:local/qwen2.5-72b-instruct
+
+llama-cpp-engine:
+  engines:
+    - name: qwen25-72b-instruct-lab01
+      alias: local/qwen2.5-72b-instruct
+      nodeName: lab01
+      modelFile: /data/models/qwen2.5-72b-instruct/qwen2.5-72b-instruct-q4_k_m.gguf
+      resources:
+        requests:
+          cpu: "4"
+          memory: "16Gi"
+          nvidia.com/gpu: "1"
+        limits:
+          cpu: "8"
+          memory: "32Gi"
+          nvidia.com/gpu: "1"
+      llama:
+        ctxSize: 8192
+        nGpuLayers: 999
+        nParallel: 2
+        threads: 8
+        flashAttention: true
+        jinja: true
+        endpointMetrics: true
+
+litellm:
+  extraModelList:
+    - model_name: local/qwen2.5-72b-instruct
+      litellm_params:
+        model: openai/local/qwen2.5-72b-instruct
+        api_base: http://sleep-proxy-service.vllm.svc.cluster.local:8080/v1
+        api_key: not-used
+      model_info:
+        lane: large-offload

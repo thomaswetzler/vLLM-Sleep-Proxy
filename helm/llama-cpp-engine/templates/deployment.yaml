@@ -1,0 +1,119 @@
+{{- range $engine := .Values.engines }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "llama-cpp-engine.deploymentName" (dict "root" $ "engine" $engine) }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "llama-cpp-engine.labels" (dict "root" $ "engine" $engine) | nindent 4 }}
+    llama-cpp-engine/name: {{ $engine.name }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "llama-cpp-engine.selectorLabels" (dict "root" $ "engine" $engine) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "llama-cpp-engine.selectorLabels" (dict "root" $ "engine" $engine) | nindent 8 }}
+    spec:
+      runtimeClassName: {{ default $.Values.runtimeClassName $engine.runtimeClassName | quote }}
+      {{- if $engine.nodeName }}
+      nodeName: {{ $engine.nodeName | quote }}
+      {{- end }}
+      containers:
+        - name: llama-cpp-engine
+          image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag }}"
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ $.Values.service.targetPort }}
+              protocol: TCP
+          env:
+            - name: ENGINE_MODEL_ALIAS
+              value: {{ $engine.alias | quote }}
+            - name: ENGINE_MODEL_FILE
+              value: {{ $engine.modelFile | quote }}
+            - name: ENGINE_MODEL_PATH
+              value: {{ $engine.modelFile | quote }}
+            - name: ENGINE_NODE_NAME
+              value: {{ default "" $engine.nodeName | quote }}
+            - name: LLAMA_SERVER_LOCAL_PORT
+              value: "8081"
+            - name: LLAMA_ARG_ALIAS
+              value: {{ $engine.alias | quote }}
+            - name: LLAMA_ARG_MODEL
+              value: {{ $engine.modelFile | quote }}
+            - name: LOG_LEVEL
+              value: {{ default "info" $engine.logLevel | quote }}
+            - name: FORWARD_TIMEOUT_SECONDS
+              value: {{ default "300" $engine.forwardTimeoutSeconds | quote }}
+            - name: LLAMA_SERVER_STARTUP_TIMEOUT_SECONDS
+              value: {{ default "240" $engine.startupTimeoutSeconds | quote }}
+            - name: LLAMA_SERVER_SHUTDOWN_TIMEOUT_SECONDS
+              value: {{ default "30" $engine.shutdownTimeoutSeconds | quote }}
+            {{- with $engine.llama }}
+            {{- if hasKey . "ctxSize" }}
+            - name: LLAMA_ARG_CTX_SIZE
+              value: {{ .ctxSize | quote }}
+            {{- end }}
+            {{- if hasKey . "nGpuLayers" }}
+            - name: LLAMA_ARG_N_GPU_LAYERS
+              value: {{ .nGpuLayers | quote }}
+            {{- end }}
+            {{- if hasKey . "nParallel" }}
+            - name: LLAMA_ARG_N_PARALLEL
+              value: {{ .nParallel | quote }}
+            {{- end }}
+            {{- if hasKey . "threads" }}
+            - name: LLAMA_ARG_THREADS
+              value: {{ .threads | quote }}
+            {{- end }}
+            {{- if hasKey . "flashAttention" }}
+            - name: LLAMA_ARG_FLASH_ATTN
+              value: {{ .flashAttention | quote }}
+            {{- end }}
+            {{- if hasKey . "jinja" }}
+            - name: LLAMA_ARG_JINJA
+              value: {{ .jinja | quote }}
+            {{- end }}
+            {{- if hasKey . "endpointMetrics" }}
+            - name: LLAMA_ARG_ENDPOINT_METRICS
+              value: {{ .endpointMetrics | quote }}
+            {{- end }}
+            {{- if hasKey . "mmproj" }}
+            - name: LLAMA_ARG_MM_PROJ
+              value: {{ .mmproj | quote }}
+            {{- end }}
+            {{- if .extraArgs }}
+            - name: LLAMA_SERVER_EXTRA_ARGS_JSON
+              value: {{ toJson .extraArgs | quote }}
+            {{- end }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: {{ $.Values.probes.liveness.path }}
+              port: http
+            initialDelaySeconds: {{ $.Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ $.Values.probes.liveness.periodSeconds }}
+            failureThreshold: {{ $.Values.probes.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: {{ $.Values.probes.readiness.path }}
+              port: http
+            initialDelaySeconds: {{ $.Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ $.Values.probes.readiness.periodSeconds }}
+            failureThreshold: {{ $.Values.probes.readiness.failureThreshold }}
+          {{- with $engine.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: preloaded-model-cache
+              mountPath: /data
+      volumes:
+        - name: preloaded-model-cache
+          persistentVolumeClaim:
+            claimName: {{ $.Values.sharedModelCache.claimName }}
+{{- end }}
