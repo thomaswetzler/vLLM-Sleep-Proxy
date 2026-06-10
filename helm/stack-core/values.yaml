@@ -1,12 +1,63 @@
 litellm:
   # Keep the service DNS stable for ops-ui and playground defaults.
   fullnameOverride: lite-helm-litellm
+  # stack-core owns the full local runtime mix, so we override extraModelList
+  # here with both Whisper and the default llama.cpp vision lane.
+  extraModelList:
+    - model_name: local/qwen2.5-vl-7b-instruct
+      litellm_params:
+        model: openai/local/qwen2.5-vl-7b-instruct
+        api_base: http://sleep-proxy-service.vllm.svc.cluster.local:8080/v1
+        api_key: not-used
+      model_info:
+        lane: vision-llama-cpp
+    - model_name: whisper-large-v3
+      litellm_params:
+        model: openai/whisper-large-v3
+        api_base: http://cpu-whisper-service.vllm.svc.cluster.local
+        api_key: not-used
 
 llama-cpp-engine:
-  # The hybrid runtime path stays opt-in until a GGUF model file and image are
-  # prepared for the target node. See values.llama-cpp-example.yaml for a text
-  # model lane and values.llama-cpp-vl-example.yaml for a vision lane.
-  engines: []
+  # Default hybrid runtime lane for one local VLM on lab01. The image tag is
+  # pinned in the subchart values so plain `make deploy` stays reproducible.
+  engines:
+    - name: qwen25-vl-7b-instruct-lab01
+      alias: local/qwen2.5-vl-7b-instruct
+      nodeName: lab01
+      modelFile: /data/models/qwen2.5-vl-7b-instruct/Qwen_Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf
+      startupTimeoutSeconds: "600"
+      resources:
+        requests:
+          cpu: "1"
+          memory: "16Gi"
+          nvidia.com/gpu: "1"
+        limits:
+          cpu: "8"
+          memory: "24Gi"
+          nvidia.com/gpu: "1"
+      llama:
+        ctxSize: 4096
+        nGpuLayers: 0
+        nParallel: 1
+        threads: 8
+        flashAttention: true
+        jinja: true
+        endpointMetrics: false
+        mmproj: /data/models/qwen2.5-vl-7b-instruct/mmproj-Qwen_Qwen2.5-VL-7B-Instruct-f16.gguf
+
+sleep-proxy:
+  env:
+    # The GGUF vision lane needs more patience on cold starts than the pure
+    # vLLM text lanes, so the proxy should not give up during model load.
+    wakeTimeoutSeconds: "600"
+    forwardTimeoutSeconds: "900"
+    routerActionTimeoutSeconds: "600"
+    engineCatalog:
+      - model: local/qwen2.5-vl-7b-instruct
+        runtime: llama_cpp
+        endpoint: http://llama-qwen25-vl-7b-instruct-lab01-service.vllm.svc.cluster.local:8080
+        nodeName: lab01
+        engineKey: llama_cpp:lab01:local/qwen2.5-vl-7b-instruct
 
 playground:
   # Preserve the existing service/ingress object names when deployed via the

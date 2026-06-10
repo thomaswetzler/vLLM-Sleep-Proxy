@@ -28,6 +28,15 @@ spec:
         - name: llama-cpp-engine
           image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag }}"
           imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          command:
+            - python3
+            - -m
+            - uvicorn
+            - app.main:app
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8080"
           ports:
             - name: http
               containerPort: {{ $.Values.service.targetPort }}
@@ -43,6 +52,8 @@ spec:
               value: {{ default "" $engine.nodeName | quote }}
             - name: LLAMA_SERVER_LOCAL_PORT
               value: "8081"
+            - name: LD_LIBRARY_PATH
+              value: {{ $.Values.llamaServerLibraryPath | quote }}
             - name: LLAMA_ARG_ALIAS
               value: {{ $engine.alias | quote }}
             - name: LLAMA_ARG_MODEL
