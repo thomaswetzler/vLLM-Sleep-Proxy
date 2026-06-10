@@ -31,6 +31,15 @@ TEST_MAX_TOKENS  ?= 220
 TEST_MODEL       ?=
 TEST_VISION_PROMPT ?= What animals are shown in the image? Reply with one short sentence.
 TEST_VISION_IMAGE_URL ?= https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/cats.png
+TEST_VL_MODEL ?= local/qwen2.5-vl-7b-instruct
+TEST_VL_SVC ?= llama-qwen25-vl-7b-instruct-lab01-service
+TEST_VL_LOCAL_PORT ?= 18081
+TEST_VL_PDF ?= scripts/ESt1A_E10_2025_4.1.1.0_20250925.pdf
+TEST_VL_OUTPUT ?= $(patsubst %.pdf,%.md,$(TEST_VL_PDF))
+TEST_VL_TEXT_PROMPT ?= What is 2 * 5? Reply with just the result.
+TEST_VL_TEXT_MAX_TOKENS ?= 32
+TEST_VL_PROMPT ?= Convert this PDF form page into clean Markdown. Preserve headings, section numbers, tables, checkboxes, and empty input fields using Markdown-friendly placeholders like [ ] and __________. Output only Markdown.
+TEST_VL_MAX_TOKENS ?= 600
 TEST_AWAKE_TIMEOUT ?= 20
 TEST_SLEEP_TIMEOUT ?= 90
 TEST_SLEEP_POLL_INTERVAL ?= 2
@@ -80,7 +89,7 @@ MODEL_DIRS  ?= baai-bge-large-en-v1.5 gemma-3-4b-it llama-3.1-8b-instruct \
                qwen2.5-coder-7b-instruct qwen2.5-14b-instruct \
                qwen2.5-vl-7b-instruct chandra-ocr-2
 
-.PHONY: help status engines-status models toggle-model test test-portforward test-protforward test-litellm test-litellm-all test-embedding test-embedding-litellm test-whisper test-whisper-litellm \
+.PHONY: help status engines-status models toggle-model test test-portforward test-protforward test-litellm test-litellm-all test-embedding test-embedding-litellm test-whisper test-whisper-litellm test-vl test-vl-litellm \
         deps model-download check-models \
         deploy deploy-core deploy-bootstrap deploy-vllm deploy-sleep-proxy deploy-litellm deploy-ops-ui deploy-playground \
         undeploy undeploy-core undeploy-bootstrap undeploy-vllm undeploy-sleep-proxy undeploy-litellm undeploy-ops-ui undeploy-playground \
@@ -114,6 +123,8 @@ help:
 		'  make test-embedding-litellm Test embeddings via LiteLLM ingress' \
 		'  make test-whisper       Test Whisper transcription service via kubectl port-forward' \
 		'  make test-whisper-litellm Test Whisper transcription via LiteLLM ingress' \
+		'  make test-vl            Convert a local PDF form into Markdown via the VLM model' \
+		'  make test-vl-litellm    Convert a local PDF form into Markdown via LiteLLM + the VLM model' \
 		'  make deps               Update Helm chart dependencies' \
 		'  make build              Build sleep-proxy Docker image' \
 		'  make push               Push sleep-proxy Docker image to registry' \
@@ -326,6 +337,51 @@ test-whisper-litellm:
 		-F "file=@$(TEST_AUDIO)" \
 		-F "model=$(WHISPER_MODEL)" \
 		| $(JQ) '.text'
+
+test-vl:
+	@set -eu; \
+	test -f "$(TEST_VL_PDF)" || { \
+		printf 'PDF file not found: %s\nOverride with: make test-vl TEST_VL_PDF=/path/to/file.pdf\n' \
+		"$(TEST_VL_PDF)" >&2; exit 1; }; \
+	printf 'Port-forwarding %s:8080 → localhost:%s ...\n' "$(TEST_VL_SVC)" "$(TEST_VL_LOCAL_PORT)"; \
+	pkill -f "port-forward.*$(TEST_VL_LOCAL_PORT)" 2>/dev/null || true; sleep 1; \
+	$(KUBECTL) -n "$(NAMESPACE)" port-forward svc/$(TEST_VL_SVC) $(TEST_VL_LOCAL_PORT):8080 >/dev/null 2>&1 & \
+	pf_pid=$$!; \
+	trap 'kill $$pf_pid 2>/dev/null || true' EXIT HUP INT TERM; \
+	for i in 1 2 3 4 5; do \
+		sleep 1; \
+		$(CURL) -sf --max-time 2 http://localhost:$(TEST_VL_LOCAL_PORT)/health >/dev/null 2>&1 && break; \
+		printf 'Waiting for port-forward... (%s/5)\n' "$$i"; \
+	done; \
+	printf 'Converting %s to Markdown via %s ...\n' "$(TEST_VL_PDF)" "$(TEST_VL_MODEL)"; \
+	$(PYTHON) ./scripts/test_vl_pdf.py \
+		--base-url "http://localhost:$(TEST_VL_LOCAL_PORT)" \
+		--model "$(TEST_VL_MODEL)" \
+		--pdf-path "$(TEST_VL_PDF)" \
+		--output-path "$(TEST_VL_OUTPUT)" \
+		--text-prompt "$(TEST_VL_TEXT_PROMPT)" \
+		--text-max-tokens "$(TEST_VL_TEXT_MAX_TOKENS)" \
+		--prompt "$(TEST_VL_PROMPT)" \
+		--max-tokens "$(TEST_VL_MAX_TOKENS)"
+
+test-vl-litellm:
+	@set -eu; \
+	test -n "$$LITELLM_MASTER_KEY" || { \
+		printf 'LITELLM_MASTER_KEY is not set. Set it in .env:\n  LITELLM_MASTER_KEY=sk-...\n' >&2; exit 1; }; \
+	test -f "$(TEST_VL_PDF)" || { \
+		printf 'PDF file not found: %s\nOverride with: make test-vl-litellm TEST_VL_PDF=/path/to/file.pdf\n' \
+		"$(TEST_VL_PDF)" >&2; exit 1; }; \
+	printf 'Converting %s to Markdown via LiteLLM model %s ...\n' "$(TEST_VL_PDF)" "$(TEST_VL_MODEL)"; \
+	$(PYTHON) ./scripts/test_vl_pdf.py \
+		--completions-url "$(COMPLETIONS_URL)" \
+		--api-key "$$LITELLM_MASTER_KEY" \
+		--model "$(TEST_VL_MODEL)" \
+		--pdf-path "$(TEST_VL_PDF)" \
+		--output-path "$(TEST_VL_OUTPUT)" \
+		--text-prompt "$(TEST_VL_TEXT_PROMPT)" \
+		--text-max-tokens "$(TEST_VL_TEXT_MAX_TOKENS)" \
+		--prompt "$(TEST_VL_PROMPT)" \
+		--max-tokens "$(TEST_VL_MAX_TOKENS)"
 
 # ── Helm dependencies ─────────────────────────────────────────────────────────
 
