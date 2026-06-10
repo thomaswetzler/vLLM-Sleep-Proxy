@@ -443,6 +443,79 @@ async def _sleep_engine_after_idle(
                 _pending_sleep_tasks.pop(engine_id, None)
 
 
+async def force_model_sleep(
+    model: str,
+    *,
+    level: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Best-effort debug helper that puts one resolved engine into sleep mode.
+
+    This is intentionally exposed only via debug endpoints and test tooling so
+    we can verify the full wake-on-demand path from a known sleeping baseline.
+    """
+    engine = await engine_client.resolve_engine(model)
+    if engine is None:
+        raise HTTPException(status_code=404, detail=f"Modell {model!r} nicht gefunden")
+
+    engine_id = engine.engine_id
+    node_name = engine.node_name or await _resolve_model_node(model)
+    sleep_level = settings.auto_sleep_level if level is None else level
+
+    async with _engine_state_lock:
+        pending_task = _pending_sleep_tasks.pop(engine_id, None)
+    if pending_task is not None:
+        pending_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await pending_task
+
+    lock = await _get_engine_lock(engine_id)
+    async with lock:
+        inflight = int(_engine_inflight.get(engine_id, 0))
+        if inflight > 0:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Modell {model!r} hat noch {inflight} laufende Request(s) "
+                    "und kann gerade nicht zwangsweise schlafen gelegt werden."
+                ),
+            )
+
+        try:
+            sleeping = await engine_client.is_sleeping(engine)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=f"is_sleeping für Modell {model!r} fehlgeschlagen: {exc}",
+            ) from exc
+
+        if not sleeping:
+            try:
+                await engine_client.sleep(engine, level=sleep_level)
+                await engine_client.poll_until_sleeping(engine)
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"sleep für Modell {model!r} fehlgeschlagen: {exc}",
+                ) from exc
+
+    if node_name is not None:
+        await _release_node_reservation(
+            node_name,
+            engine_id,
+            model,
+            reason="debug forced sleep",
+        )
+
+    return {
+        "status": "sleeping",
+        "model": model,
+        "runtime": engine.runtime,
+        "engine_id": engine_id,
+        "node": node_name,
+        "level": sleep_level,
+    }
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Wake-on-Demand
 # ──────────────────────────────────────────────────────────────────────────────

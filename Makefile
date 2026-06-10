@@ -28,6 +28,12 @@ TEST_PROMPT      ?= Was ist 4 + 3?
 TEST_EMBEDDING_INPUT ?= Hello world
 TEST_TEMPERATURE ?= 0.7
 TEST_MAX_TOKENS  ?= 220
+TEST_MODEL       ?=
+TEST_VISION_PROMPT ?= What animals are shown in the image? Reply with one short sentence.
+TEST_VISION_IMAGE_URL ?= https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/cats.png
+TEST_AWAKE_TIMEOUT ?= 20
+TEST_SLEEP_TIMEOUT ?= 90
+TEST_SLEEP_POLL_INTERVAL ?= 2
 GPU_TEST_LOCAL_PORT ?= 18000
 HELM_TIMEOUT     ?= 35m
 UNDEPLOY_TIMEOUT ?= 2m
@@ -59,6 +65,8 @@ JQ      ?= jq
 HELM    ?= helm
 PYTHON  ?= python3
 KUBECTL ?= kubectl
+ROUTER_SVC ?= vllm-router-service
+ROUTER_SVC_PORT ?= 80
 
 IMAGE_REGISTRY   ?= ghcr.io/thomaswetzler
 IMAGE_NAME       ?= sleep-proxy
@@ -72,7 +80,7 @@ MODEL_DIRS  ?= baai-bge-large-en-v1.5 gemma-3-4b-it llama-3.1-8b-instruct \
                qwen2.5-coder-7b-instruct qwen2.5-14b-instruct \
                qwen2.5-vl-7b-instruct chandra-ocr-2
 
-.PHONY: help status engines-status models toggle-model test test-portforward test-protforward test-litellm test-embedding test-embedding-litellm test-whisper test-whisper-litellm \
+.PHONY: help status engines-status models toggle-model test test-portforward test-protforward test-litellm test-litellm-all test-embedding test-embedding-litellm test-whisper test-whisper-litellm \
         deps model-download check-models \
         deploy deploy-core deploy-bootstrap deploy-vllm deploy-sleep-proxy deploy-litellm deploy-ops-ui deploy-playground \
         undeploy undeploy-core undeploy-bootstrap undeploy-vllm undeploy-sleep-proxy undeploy-litellm undeploy-ops-ui undeploy-playground \
@@ -100,7 +108,8 @@ help:
 		'  make toggle-model       Interactive: choose a model and flip its sleep state' \
 		'  make test-portforward   Interactive: choose a model and test it via direct kubectl port-forward' \
 		'  make test-protforward   Alias for make test-portforward' \
-		'  make test-litellm      Interactive: choose a model and run the matching LiteLLM ingress test' \
+		'  make test-litellm      Interactive by default; use TEST_MODEL=<name> or TEST_MODEL=all for automated LiteLLM tests' \
+		'  make test-litellm-all  Run the automated LiteLLM smoke test across all configured local/CPU models' \
 		'  make test-embedding     Test TEI embedding service via kubectl port-forward' \
 		'  make test-embedding-litellm Test embeddings via LiteLLM ingress' \
 		'  make test-whisper       Test Whisper transcription service via kubectl port-forward' \
@@ -196,6 +205,31 @@ test-litellm:
 	@set -eu; \
 	test -n "$$LITELLM_MASTER_KEY" || { \
 		printf 'LITELLM_MASTER_KEY is not set. Set it in .env:\n  LITELLM_MASTER_KEY=sk-...\n' >&2; exit 1; }; \
+	if [ -n "$(TEST_MODEL)" ]; then \
+		$(PYTHON) ./scripts/test_litellm_models.py \
+			--models-url "$(MODELS_URL)" \
+			--completions-url "$(COMPLETIONS_URL)" \
+			--embeddings-url "$(EMBEDDINGS_URL)" \
+			--transcriptions-url "$(TRANSCRIPTIONS_URL)" \
+			--api-key "$$LITELLM_MASTER_KEY" \
+			--namespace "$(NAMESPACE)" \
+			--kubectl "$(KUBECTL)" \
+			--helm "$(HELM)" \
+			--core-release "$(CORE_RELEASE)" \
+			--router-service "$(ROUTER_SVC)" \
+			--router-port "$(ROUTER_SVC_PORT)" \
+			--test-audio "$(TEST_AUDIO)" \
+			--test-model "$(TEST_MODEL)" \
+			--text-prompt "$(TEST_PROMPT)" \
+			--vision-prompt "$(TEST_VISION_PROMPT)" \
+			--vision-image-url "$(TEST_VISION_IMAGE_URL)" \
+			--max-tokens "$(TEST_MAX_TOKENS)" \
+			--sleep-level "$(SLEEP_LEVEL)" \
+			--awake-timeout "$(TEST_AWAKE_TIMEOUT)" \
+			--sleep-timeout "$(TEST_SLEEP_TIMEOUT)" \
+			--sleep-poll-interval "$(TEST_SLEEP_POLL_INTERVAL)"; \
+		exit $$?; \
+	fi; \
 	response_file=$$(mktemp); models_file=$$(mktemp); completion_file=$$(mktemp); \
 	trap 'rm -f "$$response_file" "$$models_file" "$$completion_file"' EXIT HUP INT TERM; \
 	$(CURL) -fsS -H "Authorization: Bearer $$LITELLM_MASTER_KEY" "$(MODELS_URL)" > "$$response_file"; \
@@ -208,38 +242,31 @@ test-litellm:
 	model=$$(sed -n "$${sel}p" "$$models_file"); \
 	[ -n "$$model" ] || { printf 'Invalid selection.\n' >&2; exit 1; }; \
 	printf 'Testing via LiteLLM ingress: %s\n' "$$model"; \
-	case "$$model" in \
-		"$(EMBEDDING_MODEL)") \
-			payload=$$($(JQ) -nc --arg input "$(TEST_EMBEDDING_INPUT)" --arg model "$$model" \
-				'{input:$$input,model:$$model}'); \
-			http_code=$$($(CURL) -sS -o "$$completion_file" -w '%{http_code}' "$(EMBEDDINGS_URL)" \
-				-H 'Content-Type: application/json' -H "Authorization: Bearer $$LITELLM_MASTER_KEY" -d "$$payload"); \
-			case "$$http_code" in 2??) \
-				result=$$($(JQ) '.data[0].embedding | length' < "$$completion_file"); \
-				printf 'Embedding dimension via LiteLLM: %s (expected: 1024)\n' "$$result" ;; \
-				*) printf 'HTTP %s\n' "$$http_code" >&2; $(JQ) < "$$completion_file" >&2; exit 1 ;; esac ;; \
-		"$(WHISPER_MODEL)") \
-			test -f "$(TEST_AUDIO)" || { \
-				printf 'Audio file not found: %s\nOverride with: make test-litellm TEST_AUDIO=/path/to/file.mp3\n' \
-				"$(TEST_AUDIO)" >&2; exit 1; }; \
-			http_code=$$($(CURL) -sS --max-time 120 -o "$$completion_file" -w '%{http_code}' "$(TRANSCRIPTIONS_URL)" \
-				-H "Authorization: Bearer $$LITELLM_MASTER_KEY" \
-				-F "file=@$(TEST_AUDIO)" \
-				-F "model=$$model"); \
-			case "$$http_code" in 2??) $(JQ) '.text' < "$$completion_file" ;; \
-				*) printf 'HTTP %s\n' "$$http_code" >&2; $(JQ) < "$$completion_file" >&2; exit 1 ;; esac ;; \
-		*) \
-			payload=$$($(JQ) -nc \
-				--arg model "$$model" \
-				--arg prompt "$(TEST_PROMPT)" \
-				--argjson temperature "$(TEST_TEMPERATURE)" \
-				--argjson max_tokens "$(TEST_MAX_TOKENS)" \
-				'{model:$$model,messages:[{role:"user",content:$$prompt}],temperature:$$temperature,max_tokens:$$max_tokens}'); \
-			http_code=$$($(CURL) -sS -o "$$completion_file" -w '%{http_code}' "$(COMPLETIONS_URL)" \
-				-H 'Content-Type: application/json' -H "Authorization: Bearer $$LITELLM_MASTER_KEY" -d "$$payload"); \
-			case "$$http_code" in 2??) $(JQ) < "$$completion_file" ;; \
-				*) printf 'HTTP %s\n' "$$http_code" >&2; $(JQ) < "$$completion_file" >&2; exit 1 ;; esac ;; \
-	esac
+	$(PYTHON) ./scripts/test_litellm_models.py \
+		--models-url "$(MODELS_URL)" \
+		--completions-url "$(COMPLETIONS_URL)" \
+		--embeddings-url "$(EMBEDDINGS_URL)" \
+		--transcriptions-url "$(TRANSCRIPTIONS_URL)" \
+		--api-key "$$LITELLM_MASTER_KEY" \
+		--namespace "$(NAMESPACE)" \
+		--kubectl "$(KUBECTL)" \
+		--helm "$(HELM)" \
+		--core-release "$(CORE_RELEASE)" \
+		--router-service "$(ROUTER_SVC)" \
+		--router-port "$(ROUTER_SVC_PORT)" \
+		--test-audio "$(TEST_AUDIO)" \
+		--test-model "$$model" \
+		--text-prompt "$(TEST_PROMPT)" \
+		--vision-prompt "$(TEST_VISION_PROMPT)" \
+		--vision-image-url "$(TEST_VISION_IMAGE_URL)" \
+		--max-tokens "$(TEST_MAX_TOKENS)" \
+		--sleep-level "$(SLEEP_LEVEL)" \
+		--awake-timeout "$(TEST_AWAKE_TIMEOUT)" \
+		--sleep-timeout "$(TEST_SLEEP_TIMEOUT)" \
+		--sleep-poll-interval "$(TEST_SLEEP_POLL_INTERVAL)"
+
+test-litellm-all:
+	@$(MAKE) --no-print-directory test-litellm TEST_MODEL=all
 
 test-embedding-litellm:
 	@set -eu; \
