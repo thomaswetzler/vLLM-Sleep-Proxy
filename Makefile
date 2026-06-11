@@ -85,9 +85,8 @@ LLAMA_CPP_ENGINE_IMAGE_NAME ?= llama-cpp-engine
 # PVC check — keep in sync with helm/models/values.yaml loader.models
 PVC_NAME    ?= vllm-model-cache
 CHECK_IMG   ?= alpine:3.19
-MODEL_DIRS  ?= baai-bge-large-en-v1.5 gemma-3-4b-it llama-3.1-8b-instruct \
-               qwen2.5-coder-7b-instruct qwen2.5-14b-instruct \
-               qwen2.5-vl-7b-instruct chandra-ocr-2
+MODEL_DIRS  ?= baai-bge-large-en-v1.5 gemma-4-12b-it qwen3-14b-fp8 \
+               qwen2.5-coder-7b-instruct deepseek-r1-distill-qwen-7b
 
 .PHONY: help status engines-status models toggle-model test test-portforward test-protforward test-litellm test-litellm-all test-embedding test-embedding-litellm test-whisper test-whisper-litellm test-vl test-vl-litellm \
         deps model-download check-models \

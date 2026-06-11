@@ -27,12 +27,10 @@ POD_NAME   = "vllm-model-check"
 # Keep in sync with helm/models/values.yaml loader.models (enabled entries)
 _DEFAULT_MODEL_DIRS = [
     "baai-bge-large-en-v1.5",
-    "gemma-3-4b-it",
-    "llama-3.1-8b-instruct",
+    "gemma-4-12b-it",
+    "qwen3-14b-fp8",
     "qwen2.5-coder-7b-instruct",
-    "qwen2.5-14b-instruct",
-    "qwen2.5-vl-7b-instruct",
-    "chandra-ocr-2",
+    "deepseek-r1-distill-qwen-7b",
 ]
 MODEL_DIRS = os.environ.get("MODEL_DIRS", "").split() or _DEFAULT_MODEL_DIRS
 
